@@ -11,7 +11,7 @@
 
 import torch
 import numpy as np
-from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
+from utils.general_utils import inverse_sigmoid, inverse_sigmoid_python, get_expon_lr_func, build_rotation
 from torch import nn
 import os
 from utils.system_utils import mkdir_p
@@ -117,8 +117,12 @@ class GovsModel:
         return torch.cat((features_dc, features_rest), dim=1)
     
     @property
-    def get_opacity(self):
-        return self.opacity_activation(self._opacity)
+    def get_opacity_field(self):
+        return self.opacity_activation(self._opacity_field)
+    
+    @property
+    def get_opacity_field_inactivation(self):
+        return self._opacity_field
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
@@ -127,8 +131,8 @@ class GovsModel:
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
-    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
-        self.spatial_lr_scale = spatial_lr_scale
+    def create_from_pcd(self, pcd : BasicPointCloud, scene_center, scene_extent):
+        self.spatial_lr_scale = scene_extent
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
         fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
@@ -142,7 +146,23 @@ class GovsModel:
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
 
-        opacities_field = inverse_sigmoid( * torch.ones((self.opacity_field_voxels, 1), dtype=torch.float, device="cuda"))
+        self.scene_center = torch.tensor(scene_center, device="cuda") if not torch.is_tensor(scene_center) else scene_center
+        self.scene_extent = scene_extent
+        min_bound = self.scene_center - self.scene_extent
+        max_bound = self.scene_center + self.scene_extent
+        opacities_field = torch.zeros((self.opacity_field_voxels, 1), dtype=torch.float, device="cuda")
+        normed = (fused_point_cloud - min_bound) / (max_bound - min_bound)
+        idx_floor = torch.clamp((normed * self.opacity_field_resolution).floor().long(), 0, self.opacity_field_resolution - 1)
+        for dx in [0, 1]:
+            for dy in [0, 1]:
+                for dz in [0, 1]:
+                    idxs = idx_floor + torch.tensor([dx, dy, dz], device="cuda")
+                    valid_mask = ((idxs >= 0) & (idxs <= self.opacity_field_resolution)).all(dim=1)
+                    idxs_valid = idxs[valid_mask]
+                    if idxs_valid.shape[0] == 0:
+                        continue
+                    flat_idx = idxs_valid[:, 2] * ((self.opacity_field_resolution + 1) ** 2) + idxs_valid[:, 1] * (self.opacity_field_resolution + 1) + idxs_valid[:, 0]
+                    opacities_field[flat_idx] = inverse_sigmoid_python(0.1)
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
