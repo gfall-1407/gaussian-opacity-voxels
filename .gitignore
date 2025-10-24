@@ -5,6 +5,8 @@ images/
 *images*/
 output/
 *output*/
+test/
+*test*/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
