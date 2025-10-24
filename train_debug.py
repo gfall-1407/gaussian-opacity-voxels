@@ -133,12 +133,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             pipe.debug = True
         render_pkg = render(viewpoint_cam, govs, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        if iteration % 500 == 0:
+        if iteration % 1 == 0:
             image_np = image.detach().cpu().numpy()
             image_np = np.transpose(image_np, (1, 2, 0))
             array = np.array(image_np*255.0, dtype=np.byte)  
             image_save = Image.fromarray(array, "RGB")  
-            image_save.save("test\\" + str(iteration) + ".png" )
+            image_save.save("test/" + str(iteration) + ".png" )
         
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
