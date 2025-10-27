@@ -299,6 +299,8 @@ class GovsModel:
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
+            if group["name"] == 'opacity_field':
+                continue
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
                 stored_state["exp_avg"] = stored_state["exp_avg"][mask]
@@ -321,7 +323,7 @@ class GovsModel:
         self._xyz = optimizable_tensors["xyz"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
-        self._opacity = optimizable_tensors["opacity"]
+        # self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
 
@@ -334,6 +336,8 @@ class GovsModel:
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
             assert len(group["params"]) == 1
+            if group["name"] not in tensors_dict:
+                continue
             extension_tensor = tensors_dict[group["name"]]
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
@@ -417,12 +421,12 @@ class GovsModel:
         self.densify_and_clone(grads, max_grad, extent)
         self.densify_and_split(grads, max_grad, extent)
 
-        prune_mask = (self.get_opacity < min_opacity).squeeze()
-        if max_screen_size:
-            big_points_vs = self.max_radii2D > max_screen_size
-            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
-            prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
-        self.prune_points(prune_mask)
+        # prune_mask = (self.get_opacity < min_opacity).squeeze()
+        # if max_screen_size:
+        #     big_points_vs = self.max_radii2D > max_screen_size
+        #     big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
+        #     prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
+        # self.prune_points(prune_mask)
 
         torch.cuda.empty_cache()
 

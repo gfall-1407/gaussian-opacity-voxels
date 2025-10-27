@@ -145,7 +145,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         loss.backward()
-
+# 
         iter_end.record()
 
         with torch.no_grad():
@@ -169,21 +169,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 govs.max_radii2D[visibility_filter] = torch.max(govs.max_radii2D[visibility_filter], radii[visibility_filter])
                 govs.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-                if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
-                    size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    govs.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+            if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
+                size_threshold = 20 if iteration > opt.opacity_reset_interval else None
+                govs.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
                 
                 # if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                 #     govs.reset_opacity()
 
             # Optimizer step
             if iteration < opt.iterations:
-                govs.optimizer.step()
-                govs.optimizer.zero_grad(set_to_none = True)
-
-            if (iteration in checkpoint_iterations):
-                print("\n[ITER {}] Saving Checkpoint".format(iteration))
-                torch.save((govs.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+               govs.optimizer.step()
+               govs.optimizer.zero_grad(set_to_none = True)
+# 
+            # if (iteration in checkpoint_iterations):
+            #     print("\n[ITER {}] Saving Checkpoint".format(iteration))
+            #     torch.save((govs.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
 
 if __name__ == "__main__":
