@@ -293,6 +293,88 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float o011 = opacity_field[OP_IDX(x0, y1, z1)];
 	float o111 = opacity_field[OP_IDX(x1, y1, z1)];
 
+
+	// {
+	// int x0 = max(0, min(R - 1, p_voxel_floor.x - 1));
+	// int x1 = max(0, min(R - 1, p_voxel_floor.x));
+	// int x2 = max(0, min(R - 1, p_voxel_floor.x + 1));
+	// int x3 = max(0, min(R - 1, p_voxel_floor.x + 2));
+	// int y0 = max(0, min(R - 1, p_voxel_floor.y - 1));
+	// int y1 = max(0, min(R - 1, p_voxel_floor.y));
+	// int y2 = max(0, min(R - 1, p_voxel_floor.y + 1));
+	// int y3 = max(0, min(R - 1, p_voxel_floor.y + 2));
+	// int z0 = max(0, min(R - 1, p_voxel_floor.z - 1));
+	// int z1 = max(0, min(R - 1, p_voxel_floor.z));
+	// int z2 = max(0, min(R - 1, p_voxel_floor.z + 1));
+	// int z3 = max(0, min(R - 1, p_voxel_floor.z + 2));
+// 
+	// // Fetch the 8 corner values
+	// float o000 = opacity_field[OP_IDX(x0, y0, z0)];
+	// float o001 = opacity_field[OP_IDX(x0, y0, z0)];
+	// float o002 = opacity_field[OP_IDX(x0, y0, z2)];
+	// float o003 = opacity_field[OP_IDX(x0, y0, z3)];
+	// float o010 = opacity_field[OP_IDX(x0, y1, z0)];
+	// float o011 = opacity_field[OP_IDX(x0, y1, z1)];
+	// float o012 = opacity_field[OP_IDX(x0, y1, z2)];
+	// float o013 = opacity_field[OP_IDX(x0, y1, z3)];
+	// float o020 = opacity_field[OP_IDX(x0, y2, z0)];
+	// float o021 = opacity_field[OP_IDX(x0, y2, z1)];
+	// float o022 = opacity_field[OP_IDX(x0, y2, z2)];
+	// float o023 = opacity_field[OP_IDX(x0, y2, z3)];
+	// float o030 = opacity_field[OP_IDX(x0, y3, z0)];
+	// float o031 = opacity_field[OP_IDX(x0, y3, z1)];
+	// float o032 = opacity_field[OP_IDX(x0, y3, z2)];
+	// float o033 = opacity_field[OP_IDX(x0, y3, z3)];
+	// float o100 = opacity_field[OP_IDX(x1, y0, z0)];
+	// float o101 = opacity_field[OP_IDX(x1, y0, z1)];
+	// float o102 = opacity_field[OP_IDX(x1, y0, z2)];
+	// float o103 = opacity_field[OP_IDX(x1, y0, z3)];
+	// float o110 = opacity_field[OP_IDX(x1, y1, z0)];
+	// float o111 = opacity_field[OP_IDX(x1, y1, z1)];
+	// float o112 = opacity_field[OP_IDX(x1, y1, z2)];
+	// float o113 = opacity_field[OP_IDX(x1, y1, z3)];
+	// float o120 = opacity_field[OP_IDX(x1, y2, z0)];
+	// float o121 = opacity_field[OP_IDX(x1, y2, z1)];
+	// float o122 = opacity_field[OP_IDX(x1, y2, z2)];
+	// float o123 = opacity_field[OP_IDX(x1, y2, z3)];
+	// float o130 = opacity_field[OP_IDX(x1, y3, z0)];
+	// float o131 = opacity_field[OP_IDX(x1, y3, z1)];
+	// float o132 = opacity_field[OP_IDX(x1, y3, z2)];
+	// float o133 = opacity_field[OP_IDX(x1, y3, z3)];
+	// float o200 = opacity_field[OP_IDX(x2, y0, z0)];
+	// float o201 = opacity_field[OP_IDX(x2, y0, z1)];
+	// float o202 = opacity_field[OP_IDX(x2, y0, z2)];
+	// float o203 = opacity_field[OP_IDX(x2, y0, z3)];
+	// float o210 = opacity_field[OP_IDX(x2, y1, z0)];
+	// float o211 = opacity_field[OP_IDX(x2, y1, z1)];
+	// float o212 = opacity_field[OP_IDX(x2, y1, z2)];
+	// float o213 = opacity_field[OP_IDX(x2, y1, z3)];
+	// float o220 = opacity_field[OP_IDX(x2, y2, z0)];
+	// float o221 = opacity_field[OP_IDX(x2, y2, z1)];
+	// float o222 = opacity_field[OP_IDX(x2, y2, z2)];
+	// float o223 = opacity_field[OP_IDX(x2, y2, z3)];
+	// float o230 = opacity_field[OP_IDX(x2, y3, z0)];
+	// float o231 = opacity_field[OP_IDX(x2, y3, z1)];
+	// float o232 = opacity_field[OP_IDX(x2, y3, z2)];
+	// float o233 = opacity_field[OP_IDX(x2, y3, z3)];
+	// float o300 = opacity_field[OP_IDX(x3, y0, z0)];
+	// float o301 = opacity_field[OP_IDX(x3, y0, z1)];
+	// float o302 = opacity_field[OP_IDX(x3, y0, z2)];
+	// float o303 = opacity_field[OP_IDX(x3, y0, z3)];
+	// float o310 = opacity_field[OP_IDX(x3, y1, z0)];
+	// float o311 = opacity_field[OP_IDX(x3, y1, z1)];
+	// float o312 = opacity_field[OP_IDX(x3, y1, z2)];
+	// float o313 = opacity_field[OP_IDX(x3, y1, z3)];
+	// float o320 = opacity_field[OP_IDX(x3, y2, z0)];
+	// float o321 = opacity_field[OP_IDX(x3, y2, z1)];
+	// float o322 = opacity_field[OP_IDX(x3, y2, z2)];
+	// float o323 = opacity_field[OP_IDX(x3, y2, z3)];
+	// float o330 = opacity_field[OP_IDX(x3, y3, z0)];
+	// float o331 = opacity_field[OP_IDX(x3, y3, z1)];
+	// float o332 = opacity_field[OP_IDX(x3, y3, z2)];
+	// float o333 = opacity_field[OP_IDX(x3, y3, z3)];
+	// }
+
 	// Trilinear interpolation: lerp along x, then y, then z
 	float ox00 = o000 * (1.0f - fx) + o100 * fx;
 	float ox10 = o010 * (1.0f - fx) + o110 * fx;

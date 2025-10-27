@@ -348,6 +348,7 @@ void CudaRasterizer::Rasterizer::backward(
 	const float* background,
 	const int width, int height,
 	const float* means3D,
+	const float* opacity_field,
 	const float* shs,
 	const float* colors_precomp,
 	const float* scales,
@@ -400,6 +401,7 @@ void CudaRasterizer::Rasterizer::backward(
 		tile_grid,
 		block,
 		(float3*)means3D,
+		opacity_field,
 		imgState.ranges,
 		binningState.point_list,
 		width, height,
@@ -414,6 +416,7 @@ void CudaRasterizer::Rasterizer::backward(
 		opacity_field_resolution,
 		dL_dpix,
 		(float3*)dL_dmean2D,
+		(float3*)dL_dmean3D,
 		(float4*)dL_dconic,
 		dL_dopacity_field,
 		dL_dcolor), debug)

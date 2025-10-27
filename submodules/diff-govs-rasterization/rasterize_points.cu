@@ -124,6 +124,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
  RasterizeGovsBackwardCUDA(
  	const torch::Tensor& background,
 	const torch::Tensor& means3D,
+	const torch::Tensor& opacity_field,
 	const torch::Tensor& radii,
     const torch::Tensor& colors,
 	const torch::Tensor& scales,
@@ -173,6 +174,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	  background.contiguous().data<float>(),
 	  W, H, 
 	  means3D.contiguous().data<float>(),
+	  opacity_field.contiguous().data<float>(),
 	  sh.contiguous().data<float>(),
 	  colors.contiguous().data<float>(),
 	  scales.data_ptr<float>(),

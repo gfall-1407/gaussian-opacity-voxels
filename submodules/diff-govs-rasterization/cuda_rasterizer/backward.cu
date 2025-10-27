@@ -270,7 +270,10 @@ __global__ void computeCov2DCUDA(int P,
 	// Gradients of loss w.r.t. Gaussian means, but only the portion 
 	// that is caused because the mean affects the covariance matrix.
 	// Additional mean gradient is accumulated in BACKWARD::preprocess.
-	dL_dmeans[idx] = dL_dmean;
+	//dL_dmeans[idx] = dL_dmean;
+	atomicAdd(&(dL_dmeans[idx].x), dL_dmean.x);
+	atomicAdd(&(dL_dmeans[idx].y), dL_dmean.y);
+	atomicAdd(&(dL_dmeans[idx].z), dL_dmean.z);
 }
 
 // Backward pass for the conversion of scale and rotation to a 
@@ -400,6 +403,7 @@ template <uint32_t C>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const float3* __restrict__ means,
+	const float* __restrict__ opacity_field,
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
@@ -414,6 +418,7 @@ renderCUDA(
 	const int opacity_field_resolution,
 	const float* __restrict__ dL_dpixels,
 	float3* __restrict__ dL_dmean2D,
+	float3* __restrict__ dL_dmeans,
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity_field,
 	float* __restrict__ dL_dcolors)
@@ -578,6 +583,24 @@ renderCUDA(
 				int y1 = max(0, min(R - 1, p_voxel_floor.y + 1));
 				int z1 = max(0, min(R - 1, p_voxel_floor.z + 1));
 
+				// Fetch the 8 corner values
+				float o000 = opacity_field[OP_IDX(x0, y0, z0)];
+				float o100 = opacity_field[OP_IDX(x1, y0, z0)];
+				float o010 = opacity_field[OP_IDX(x0, y1, z0)];
+				float o110 = opacity_field[OP_IDX(x1, y1, z0)];
+				float o001 = opacity_field[OP_IDX(x0, y0, z1)];
+				float o101 = opacity_field[OP_IDX(x1, y0, z1)];
+				float o011 = opacity_field[OP_IDX(x0, y1, z1)];
+				float o111 = opacity_field[OP_IDX(x1, y1, z1)];
+
+				float ox00 = o000 * (1.0f - fx) + o100 * fx;
+				float ox10 = o010 * (1.0f - fx) + o110 * fx;
+				float ox01 = o001 * (1.0f - fx) + o101 * fx;
+				float ox11 = o011 * (1.0f - fx) + o111 * fx;
+
+				float oy0 = ox00 * (1.0f - fy) + ox10 * fy;
+				float oy1 = ox01 * (1.0f - fy) + ox11 * fy;
+
 				float curr_opacity = conic_opacity[global_id].w;
 				float upstream_grad = curr_opacity * (1.0f - curr_opacity);
 
@@ -605,6 +628,11 @@ renderCUDA(
 				float dalpha_dop011 = dalpha_doy1 * doy1_dox11 * dox11_dop011 * upstream_grad;
 				float dalpha_dop111 = dalpha_doy1 * doy1_dox11 * dox11_dop111 * upstream_grad;
 
+				float dalpha_dfz = oy1;
+				float dalpha_dfy = dalpha_doy0 * (-ox00 +ox10) + dalpha_doy1 * (-ox01 + ox11);
+				float dalpha_dfx = dalpha_doy0 * doy0_dox00 * (-o000 + o100) + dalpha_doy0 * doy0_dox10 * (-o010 + o110) +
+									dalpha_doy1 * doy1_dox01 * (-o001 + o101) + dalpha_doy1 * doy1_dox11 * (-o011 + o111);
+
 				// Update gradients w.r.t. opacity of the Gaussian
 				//atomicAdd(&(dL_dopacity_field[global_id]), G * dL_dalpha);
 				atomicAdd(&(dL_dopacity_field[OP_IDX(x0, y0, z0)]), G * dL_dalpha * dalpha_dop000);
@@ -615,6 +643,10 @@ renderCUDA(
 				atomicAdd(&(dL_dopacity_field[OP_IDX(x1, y0, z1)]), G * dL_dalpha * dalpha_dop101);
 				atomicAdd(&(dL_dopacity_field[OP_IDX(x0, y1, z1)]), G * dL_dalpha * dalpha_dop011);
 				atomicAdd(&(dL_dopacity_field[OP_IDX(x1, y1, z1)]), G * dL_dalpha * dalpha_dop111);	
+				atomicAdd(&(dL_dmeans[global_id].x), G * dL_dalpha * dalpha_dfx);
+				atomicAdd(&(dL_dmeans[global_id].y), G * dL_dalpha * dalpha_dfy);
+				atomicAdd(&(dL_dmeans[global_id].z), G * dL_dalpha * dalpha_dfz);
+				#undef OP_IDX
 			}
 		}
 	}
@@ -688,6 +720,7 @@ void BACKWARD::preprocess(
 void BACKWARD::render(
 	const dim3 grid, const dim3 block,
 	const float3* means,
+	const float* opacity_field,
 	const uint2* ranges,
 	const uint32_t* point_list,
 	int W, int H,
@@ -702,12 +735,14 @@ void BACKWARD::render(
 	const int opacity_field_resolution,
 	const float* dL_dpixels,
 	float3* dL_dmean2D,
+	float3* dL_dmean3D,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
 	float* dL_dcolors)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
 		means,
+		opacity_field,
 		ranges,
 		point_list,
 		W, H,
@@ -722,6 +757,7 @@ void BACKWARD::render(
 		opacity_field_resolution,
 		dL_dpixels,
 		dL_dmean2D,
+		dL_dmean3D,
 		dL_dconic2D,
 		dL_dopacity,
 		dL_dcolors

@@ -23,6 +23,7 @@ namespace BACKWARD
 	void render(
 		const dim3 grid, dim3 block,
 		const float3* means,
+		const float* opacity_field,
 		const uint2* ranges,
 		const uint32_t* point_list,
 		int W, int H,
@@ -37,6 +38,7 @@ namespace BACKWARD
 		const int opacity_field_resolution,
 		const float* dL_dpixels,
 		float3* dL_dmean2D,
+		float3* dL_dmean3D,
 		float4* dL_dconic2D,
 		float* dL_dopacity,
 		float* dL_dcolors);
