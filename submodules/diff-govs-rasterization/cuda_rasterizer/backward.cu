@@ -646,10 +646,11 @@ renderCUDA(
 					}
 				}
 
+				const float coord_scale = float(opacity_field_resolution) / (2.0f * scene_radius);
 				// Update means gradients (chain rule: fx,fy,fz depend on mean)
-				atomicAdd(&(dL_dmeans[global_id].x), G * dL_dalpha * dalpha_dfx);
-				atomicAdd(&(dL_dmeans[global_id].y), G * dL_dalpha * dalpha_dfy);
-				atomicAdd(&(dL_dmeans[global_id].z), G * dL_dalpha * dalpha_dfz);
+				atomicAdd(&(dL_dmeans[global_id].x), G * dL_dalpha * dalpha_dfx	* coord_scale);
+				atomicAdd(&(dL_dmeans[global_id].y), G * dL_dalpha * dalpha_dfy	* coord_scale);
+				atomicAdd(&(dL_dmeans[global_id].z), G * dL_dalpha * dalpha_dfz	* coord_scale);
 				#undef OP_IDX
 			}
 		}
