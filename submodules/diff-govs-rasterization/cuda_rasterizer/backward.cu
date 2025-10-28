@@ -15,6 +15,22 @@
 #include <cooperative_groups/reduce.h>
 namespace cg = cooperative_groups;
 
+// Device helper: compute cubic B-spline weights and their derivatives
+__device__ inline void bspline_weights_and_deriv_device(float t, float w[4], float dw[4]) {
+	float t2 = t * t;
+	float t3 = t2 * t;
+	// weights (same as forward)
+	w[0] = (1.0f / 6.0f) * (-t3 + 3.0f * t2 - 3.0f * t + 1.0f);
+	w[1] = (1.0f / 6.0f) * (3.0f * t3 - 6.0f * t2 + 4.0f);
+	w[2] = (1.0f / 6.0f) * (-3.0f * t3 + 3.0f * t2 + 3.0f * t + 1.0f);
+	w[3] = (1.0f / 6.0f) * (t3);
+	// derivatives
+	dw[0] = (1.0f / 6.0f) * (-3.0f * t2 + 6.0f * t - 3.0f);
+	dw[1] = (1.0f / 6.0f) * (9.0f * t2 - 12.0f * t);
+	dw[2] = (1.0f / 6.0f) * (-9.0f * t2 + 6.0f * t + 3.0f);
+	dw[3] = (1.0f / 6.0f) * (3.0f * t2);
+}
+
 // Backward pass for conversion of spherical harmonics to RGB for
 // each Gaussian.
 __device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::vec3* means, glm::vec3 campos, const float* shs, const bool* clamped, const glm::vec3* dL_dcolor, glm::vec3* dL_dmeans, glm::vec3* dL_dshs)
@@ -583,66 +599,54 @@ renderCUDA(
 				int y1 = max(0, min(R - 1, p_voxel_floor.y + 1));
 				int z1 = max(0, min(R - 1, p_voxel_floor.z + 1));
 
-				// Fetch the 8 corner values
-				float o000 = opacity_field[OP_IDX(x0, y0, z0)];
-				float o100 = opacity_field[OP_IDX(x1, y0, z0)];
-				float o010 = opacity_field[OP_IDX(x0, y1, z0)];
-				float o110 = opacity_field[OP_IDX(x1, y1, z0)];
-				float o001 = opacity_field[OP_IDX(x0, y0, z1)];
-				float o101 = opacity_field[OP_IDX(x1, y0, z1)];
-				float o011 = opacity_field[OP_IDX(x0, y1, z1)];
-				float o111 = opacity_field[OP_IDX(x1, y1, z1)];
+				// Tricubic B-spline backward: match forward.cu implementation
+				// Compute 4 B-spline weights and their derivatives for fx, fy, fz
 
-				float ox00 = o000 * (1.0f - fx) + o100 * fx;
-				float ox10 = o010 * (1.0f - fx) + o110 * fx;
-				float ox01 = o001 * (1.0f - fx) + o101 * fx;
-				float ox11 = o011 * (1.0f - fx) + o111 * fx;
+				float wx[4], wy[4], wz[4];
+				float dwx[4], dwy[4], dwz[4];
+				bspline_weights_and_deriv_device(fx, wx, dwx);
+				bspline_weights_and_deriv_device(fy, wy, dwy);
+				bspline_weights_and_deriv_device(fz, wz, dwz);
 
-				float oy0 = ox00 * (1.0f - fy) + ox10 * fy;
-				float oy1 = ox01 * (1.0f - fy) + ox11 * fy;
+				// sample indices (match forward)
+				int xs[4] = { max(0, x0 - 1), x0, x1, min(R - 1, x1 + 1) };
+				int ys[4] = { max(0, y0 - 1), y0, y1, min(R - 1, y1 + 1) };
+				int zs[4] = { max(0, z0 - 1), z0, z1, min(R - 1, z1 + 1) };
 
 				float curr_opacity = conic_opacity[global_id].w;
 				float upstream_grad = curr_opacity * (1.0f - curr_opacity);
 
-				float dalpha_doy0 = 1.0f - fz;
-				float dalpha_doy1 = fz;
-				float doy0_dox00 = 1.0f - fy;
-				float doy0_dox10 = fy;
-				float doy1_dox01 = 1.0f - fy;
-				float doy1_dox11 = fy;
-				float dox00_dop000 = 1.0f - fx;
-				float dox00_dop100 = fx;
-				float dox10_dop010 = 1.0f - fx;
-				float dox10_dop110 = fx;
-				float dox01_dop001 = 1.0f - fx;
-				float dox01_dop101 = fx;
-				float dox11_dop011 = 1.0f - fx;
-				float dox11_dop111 = fx;
+				// Accumulate derivatives
+				float dalpha_dfx = 0.0f;
+				float dalpha_dfy = 0.0f;
+				float dalpha_dfz = 0.0f;
 
-				float dalpha_dop000 = dalpha_doy0 * doy0_dox00 * dox00_dop000 * upstream_grad;
-				float dalpha_dop100 = dalpha_doy0 * doy0_dox00 * dox00_dop100 * upstream_grad;
-				float dalpha_dop010 = dalpha_doy0 * doy0_dox10 * dox10_dop010 * upstream_grad;
-				float dalpha_dop110 = dalpha_doy0 * doy0_dox10 * dox10_dop110 * upstream_grad;
-				float dalpha_dop001 = dalpha_doy1 * doy1_dox01 * dox01_dop001 * upstream_grad;
-				float dalpha_dop101 = dalpha_doy1 * doy1_dox01 * dox01_dop101 * upstream_grad;
-				float dalpha_dop011 = dalpha_doy1 * doy1_dox11 * dox11_dop011 * upstream_grad;
-				float dalpha_dop111 = dalpha_doy1 * doy1_dox11 * dox11_dop111 * upstream_grad;
+				// Loop over 4x4x4 neighborhood
+				for (int iz = 0; iz < 4; ++iz) {
+					float wz_i = wz[iz];
+					int z_i = zs[iz];
+					for (int iy = 0; iy < 4; ++iy) {
+						float wy_i = wy[iy];
+						int y_i = ys[iy];
+						int base_idx = z_i * R * R + y_i * R;
+						for (int ix = 0; ix < 4; ++ix) {
+							float wx_i = wx[ix];
+							int x_i = xs[ix];
+							int idx_op = OP_IDX(x_i, y_i, z_i);
+							float val = opacity_field[idx_op];
+							float wprod = wx_i * wy_i * wz_i;
+							// contribution to opacity input (pre-sigmoid)
+							float dalpha_dop = upstream_grad * wprod;
+							atomicAdd(&(dL_dopacity_field[idx_op]), G * dL_dalpha * dalpha_dop);
+							// derivatives w.r.t. fractional coords
+							dalpha_dfx += val * (dwx[ix] * wy_i * wz_i) * upstream_grad;
+							dalpha_dfy += val * (wx_i * dwy[iy] * wz_i) * upstream_grad;
+							dalpha_dfz += val * (wx_i * wy_i * dwz[iz]) * upstream_grad;
+						}
+					}
+				}
 
-				float dalpha_dfz = oy1;
-				float dalpha_dfy = dalpha_doy0 * (-ox00 +ox10) + dalpha_doy1 * (-ox01 + ox11);
-				float dalpha_dfx = dalpha_doy0 * doy0_dox00 * (-o000 + o100) + dalpha_doy0 * doy0_dox10 * (-o010 + o110) +
-									dalpha_doy1 * doy1_dox01 * (-o001 + o101) + dalpha_doy1 * doy1_dox11 * (-o011 + o111);
-
-				// Update gradients w.r.t. opacity of the Gaussian
-				//atomicAdd(&(dL_dopacity_field[global_id]), G * dL_dalpha);
-				atomicAdd(&(dL_dopacity_field[OP_IDX(x0, y0, z0)]), G * dL_dalpha * dalpha_dop000);
-				atomicAdd(&(dL_dopacity_field[OP_IDX(x1, y0, z0)]), G * dL_dalpha * dalpha_dop100);
-				atomicAdd(&(dL_dopacity_field[OP_IDX(x0, y1, z0)]), G * dL_dalpha * dalpha_dop010);
-				atomicAdd(&(dL_dopacity_field[OP_IDX(x1, y1, z0)]), G * dL_dalpha * dalpha_dop110);
-				atomicAdd(&(dL_dopacity_field[OP_IDX(x0, y0, z1)]), G * dL_dalpha * dalpha_dop001);
-				atomicAdd(&(dL_dopacity_field[OP_IDX(x1, y0, z1)]), G * dL_dalpha * dalpha_dop101);
-				atomicAdd(&(dL_dopacity_field[OP_IDX(x0, y1, z1)]), G * dL_dalpha * dalpha_dop011);
-				atomicAdd(&(dL_dopacity_field[OP_IDX(x1, y1, z1)]), G * dL_dalpha * dalpha_dop111);	
+				// Update means gradients (chain rule: fx,fy,fz depend on mean)
 				atomicAdd(&(dL_dmeans[global_id].x), G * dL_dalpha * dalpha_dfx);
 				atomicAdd(&(dL_dmeans[global_id].y), G * dL_dalpha * dalpha_dfy);
 				atomicAdd(&(dL_dmeans[global_id].z), G * dL_dalpha * dalpha_dfz);

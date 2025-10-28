@@ -16,6 +16,16 @@
 #include <stdio.h>
 namespace cg = cooperative_groups;
 
+// Device helper: compute cubic B-spline weights (no lambda to satisfy nvcc)
+__device__ inline void bspline_weights_device(float t, float w[4]) {
+	float t2 = t * t;
+	float t3 = t2 * t;
+	w[0] = (1.0f / 6.0f) * (-t3 + 3.0f * t2 - 3.0f * t + 1.0f);
+	w[1] = (1.0f / 6.0f) * (3.0f * t3 - 6.0f * t2 + 4.0f);
+	w[2] = (1.0f / 6.0f) * (-3.0f * t3 + 3.0f * t2 + 3.0f * t + 1.0f);
+	w[3] = (1.0f / 6.0f) * (t3);
+}
+
 // Forward method for converting the input spherical harmonics
 // coefficients of each Gaussian to a simple RGB color.
 __device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const glm::vec3* means, glm::vec3 campos, const float* shs, bool* clamped)
@@ -283,108 +293,40 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	int y1 = max(0, min(R - 1, p_voxel_floor.y + 1));
 	int z1 = max(0, min(R - 1, p_voxel_floor.z + 1));
 
-	// Fetch the 8 corner values
-	float o000 = opacity_field[OP_IDX(x0, y0, z0)];
-	float o100 = opacity_field[OP_IDX(x1, y0, z0)];
-	float o010 = opacity_field[OP_IDX(x0, y1, z0)];
-	float o110 = opacity_field[OP_IDX(x1, y1, z0)];
-	float o001 = opacity_field[OP_IDX(x0, y0, z1)];
-	float o101 = opacity_field[OP_IDX(x1, y0, z1)];
-	float o011 = opacity_field[OP_IDX(x0, y1, z1)];
-	float o111 = opacity_field[OP_IDX(x1, y1, z1)];
+	// Tricubic B-spline interpolation (separable). We sample a 4x4x4
+	// neighborhood and apply cubic B-spline weights along each axis.
+	// Compute cubic B-spline weights for fractional coordinate t in [0,1).
+	float wx[4], wy[4], wz[4];
+	bspline_weights_device(fx, wx);
+	bspline_weights_device(fy, wy);
+	bspline_weights_device(fz, wz);
 
+	// Sample 4x4x4 values around the voxel floor (clamped indices x0..x1 computed earlier)
+	// We need indices for x: x0-1, x0, x1, x1+1 and similarly for y,z
+	int xs[4] = { max(0, x0 - 1), x0, x1, min(R - 1, x1 + 1) };
+	int ys[4] = { max(0, y0 - 1), y0, y1, min(R - 1, y1 + 1) };
+	int zs[4] = { max(0, z0 - 1), z0, z1, min(R - 1, z1 + 1) };
 
-	// {
-	// int x0 = max(0, min(R - 1, p_voxel_floor.x - 1));
-	// int x1 = max(0, min(R - 1, p_voxel_floor.x));
-	// int x2 = max(0, min(R - 1, p_voxel_floor.x + 1));
-	// int x3 = max(0, min(R - 1, p_voxel_floor.x + 2));
-	// int y0 = max(0, min(R - 1, p_voxel_floor.y - 1));
-	// int y1 = max(0, min(R - 1, p_voxel_floor.y));
-	// int y2 = max(0, min(R - 1, p_voxel_floor.y + 1));
-	// int y3 = max(0, min(R - 1, p_voxel_floor.y + 2));
-	// int z0 = max(0, min(R - 1, p_voxel_floor.z - 1));
-	// int z1 = max(0, min(R - 1, p_voxel_floor.z));
-	// int z2 = max(0, min(R - 1, p_voxel_floor.z + 1));
-	// int z3 = max(0, min(R - 1, p_voxel_floor.z + 2));
-// 
-	// // Fetch the 8 corner values
-	// float o000 = opacity_field[OP_IDX(x0, y0, z0)];
-	// float o001 = opacity_field[OP_IDX(x0, y0, z0)];
-	// float o002 = opacity_field[OP_IDX(x0, y0, z2)];
-	// float o003 = opacity_field[OP_IDX(x0, y0, z3)];
-	// float o010 = opacity_field[OP_IDX(x0, y1, z0)];
-	// float o011 = opacity_field[OP_IDX(x0, y1, z1)];
-	// float o012 = opacity_field[OP_IDX(x0, y1, z2)];
-	// float o013 = opacity_field[OP_IDX(x0, y1, z3)];
-	// float o020 = opacity_field[OP_IDX(x0, y2, z0)];
-	// float o021 = opacity_field[OP_IDX(x0, y2, z1)];
-	// float o022 = opacity_field[OP_IDX(x0, y2, z2)];
-	// float o023 = opacity_field[OP_IDX(x0, y2, z3)];
-	// float o030 = opacity_field[OP_IDX(x0, y3, z0)];
-	// float o031 = opacity_field[OP_IDX(x0, y3, z1)];
-	// float o032 = opacity_field[OP_IDX(x0, y3, z2)];
-	// float o033 = opacity_field[OP_IDX(x0, y3, z3)];
-	// float o100 = opacity_field[OP_IDX(x1, y0, z0)];
-	// float o101 = opacity_field[OP_IDX(x1, y0, z1)];
-	// float o102 = opacity_field[OP_IDX(x1, y0, z2)];
-	// float o103 = opacity_field[OP_IDX(x1, y0, z3)];
-	// float o110 = opacity_field[OP_IDX(x1, y1, z0)];
-	// float o111 = opacity_field[OP_IDX(x1, y1, z1)];
-	// float o112 = opacity_field[OP_IDX(x1, y1, z2)];
-	// float o113 = opacity_field[OP_IDX(x1, y1, z3)];
-	// float o120 = opacity_field[OP_IDX(x1, y2, z0)];
-	// float o121 = opacity_field[OP_IDX(x1, y2, z1)];
-	// float o122 = opacity_field[OP_IDX(x1, y2, z2)];
-	// float o123 = opacity_field[OP_IDX(x1, y2, z3)];
-	// float o130 = opacity_field[OP_IDX(x1, y3, z0)];
-	// float o131 = opacity_field[OP_IDX(x1, y3, z1)];
-	// float o132 = opacity_field[OP_IDX(x1, y3, z2)];
-	// float o133 = opacity_field[OP_IDX(x1, y3, z3)];
-	// float o200 = opacity_field[OP_IDX(x2, y0, z0)];
-	// float o201 = opacity_field[OP_IDX(x2, y0, z1)];
-	// float o202 = opacity_field[OP_IDX(x2, y0, z2)];
-	// float o203 = opacity_field[OP_IDX(x2, y0, z3)];
-	// float o210 = opacity_field[OP_IDX(x2, y1, z0)];
-	// float o211 = opacity_field[OP_IDX(x2, y1, z1)];
-	// float o212 = opacity_field[OP_IDX(x2, y1, z2)];
-	// float o213 = opacity_field[OP_IDX(x2, y1, z3)];
-	// float o220 = opacity_field[OP_IDX(x2, y2, z0)];
-	// float o221 = opacity_field[OP_IDX(x2, y2, z1)];
-	// float o222 = opacity_field[OP_IDX(x2, y2, z2)];
-	// float o223 = opacity_field[OP_IDX(x2, y2, z3)];
-	// float o230 = opacity_field[OP_IDX(x2, y3, z0)];
-	// float o231 = opacity_field[OP_IDX(x2, y3, z1)];
-	// float o232 = opacity_field[OP_IDX(x2, y3, z2)];
-	// float o233 = opacity_field[OP_IDX(x2, y3, z3)];
-	// float o300 = opacity_field[OP_IDX(x3, y0, z0)];
-	// float o301 = opacity_field[OP_IDX(x3, y0, z1)];
-	// float o302 = opacity_field[OP_IDX(x3, y0, z2)];
-	// float o303 = opacity_field[OP_IDX(x3, y0, z3)];
-	// float o310 = opacity_field[OP_IDX(x3, y1, z0)];
-	// float o311 = opacity_field[OP_IDX(x3, y1, z1)];
-	// float o312 = opacity_field[OP_IDX(x3, y1, z2)];
-	// float o313 = opacity_field[OP_IDX(x3, y1, z3)];
-	// float o320 = opacity_field[OP_IDX(x3, y2, z0)];
-	// float o321 = opacity_field[OP_IDX(x3, y2, z1)];
-	// float o322 = opacity_field[OP_IDX(x3, y2, z2)];
-	// float o323 = opacity_field[OP_IDX(x3, y2, z3)];
-	// float o330 = opacity_field[OP_IDX(x3, y3, z0)];
-	// float o331 = opacity_field[OP_IDX(x3, y3, z1)];
-	// float o332 = opacity_field[OP_IDX(x3, y3, z2)];
-	// float o333 = opacity_field[OP_IDX(x3, y3, z3)];
-	// }
-
-	// Trilinear interpolation: lerp along x, then y, then z
-	float ox00 = o000 * (1.0f - fx) + o100 * fx;
-	float ox10 = o010 * (1.0f - fx) + o110 * fx;
-	float ox01 = o001 * (1.0f - fx) + o101 * fx;
-	float ox11 = o011 * (1.0f - fx) + o111 * fx;
-
-	float oy0 = ox00 * (1.0f - fy) + ox10 * fy;
-	float oy1 = ox01 * (1.0f - fy) + ox11 * fy;
-
-	float opacity_final = oy0 * (1.0f - fz) + oy1 * fz;
+	// Fetch the 64 corner values and accumulate weighted sum
+	float opacity_final = 0.0f;
+	for (int iz = 0; iz < 4; iz++) {
+		float wz_i = wz[iz];
+		int zz_i = zs[iz];
+		for (int iy = 0; iy < 4; iy++) {
+			float wy_i = wy[iy];
+			int yy_i = ys[iy];
+			// compute linear indices for x samples
+			int base_idx = zz_i * R * R + yy_i * R;
+			float accum_x = 0.0f;
+			// unroll x loop explicitly for performance
+			float vx0 = opacity_field[base_idx + xs[0]];
+			float vx1 = opacity_field[base_idx + xs[1]];
+			float vx2 = opacity_field[base_idx + xs[2]];
+			float vx3 = opacity_field[base_idx + xs[3]];
+			accum_x = vx0 * wx[0] + vx1 * wx[1] + vx2 * wx[2] + vx3 * wx[3];
+			opacity_final += accum_x * wy_i * wz_i;
+		}
+	}
 
 	// Apply numerically-stable sigmoid to map opacity into (0,1)
 	// Clamp input to avoid overflow in expf
