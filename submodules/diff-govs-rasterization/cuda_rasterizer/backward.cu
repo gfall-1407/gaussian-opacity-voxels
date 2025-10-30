@@ -366,6 +366,11 @@ template<int C>
 __global__ void preprocessCUDA(
 	int P, int D, int M,
 	const float3* means,
+	const float* opacity_field,
+	const float4* conic_opacity,
+	const float* scene_center,
+	const float scene_radius,
+	const int opacity_field_resolution,
 	const int* radii,
 	const float* shs,
 	const bool* clamped,
@@ -379,6 +384,8 @@ __global__ void preprocessCUDA(
 	float* dL_dcolor,
 	float* dL_dcov3D,
 	float* dL_dsh,
+	float* dL_dalphas,
+	float* dL_dopacity_field,
 	glm::vec3* dL_dscale,
 	glm::vec4* dL_drot)
 {
@@ -412,14 +419,91 @@ __global__ void preprocessCUDA(
 	// Compute gradient updates due to computing covariance from scale/rotation
 	if (scales)
 		computeCov3D(idx, scales[idx], scale_modifier, rotations[idx], dL_dcov3D, dL_dscale, dL_drot);
+
+	// Inverse 2D covariance and opacity neatly pack into one float4
+	float3 p_3D = means[idx];
+	float3 bound_min = {scene_center[0] - scene_radius, scene_center[1] - scene_radius, scene_center[2] - scene_radius};
+	float3 bound_max = {scene_center[0] + scene_radius, scene_center[1] + scene_radius, scene_center[2] + scene_radius};
+	float3 p_voxel = {(p_3D.x - bound_min.x) / (scene_radius * 2.0f) * float(opacity_field_resolution),
+			(p_3D.y - bound_min.y) / (scene_radius * 2.0f) * float(opacity_field_resolution),
+			(p_3D.z - bound_min.z) / (scene_radius * 2.0f) * float(opacity_field_resolution)};
+	if(!(p_voxel.x < 0 || p_voxel.x >= float(opacity_field_resolution) || p_voxel.y < 0 || p_voxel.y >= float(opacity_field_resolution) || p_voxel.z < 0 || p_voxel.z >= float(opacity_field_resolution)))
+	{
+		int3 p_voxel_floor = {int(floorf(p_voxel.x)), int(floorf(p_voxel.y)), int(floorf(p_voxel.z))};
+		// printf("resolution: %d\np_3D: %f %f %f\nBACKWORD Voxel: %d, %d, %d\n", opacity_field_resolution, p_3D.x, p_3D.y, p_3D.z, p_voxel_floor.x, p_voxel_floor.y, p_voxel_floor.z);
+		int R = opacity_field_resolution + 1;
+		float fx = p_voxel.x - float(p_voxel_floor.x);
+		float fy = p_voxel.y - float(p_voxel_floor.y);
+		float fz = p_voxel.z - float(p_voxel_floor.z);
+		#define OP_IDX(x,y,z) ((z) * R * R + (y) * R + (x))
+		// Clamp indices to valid range [0, R-1]
+		int x0 = max(0, min(R - 1, p_voxel_floor.x));
+		int y0 = max(0, min(R - 1, p_voxel_floor.y));
+		int z0 = max(0, min(R - 1, p_voxel_floor.z));
+		int x1 = max(0, min(R - 1, p_voxel_floor.x + 1));
+		int y1 = max(0, min(R - 1, p_voxel_floor.y + 1));
+		int z1 = max(0, min(R - 1, p_voxel_floor.z + 1));
+		// Tricubic B-spline backward: match forward.cu implementation
+		// Compute 4 B-spline weights and their derivatives for fx, fy, f
+		float wx[4], wy[4], wz[4];
+		float dwx[4], dwy[4], dwz[4];
+		bspline_weights_and_deriv_device(fx, wx, dwx);
+		bspline_weights_and_deriv_device(fy, wy, dwy);
+		bspline_weights_and_deriv_device(fz, wz, dwz);
+		// sample indices (match forward)
+		int xs[4] = { max(0, x0 - 1), x0, x1, min(R - 1, x1 + 1) };
+		int ys[4] = { max(0, y0 - 1), y0, y1, min(R - 1, y1 + 1) };
+		int zs[4] = { max(0, z0 - 1), z0, z1, min(R - 1, z1 + 1) };
+		float curr_opacity = conic_opacity[idx].w;
+		float upstream_grad = curr_opacity * (1.0f - curr_opacity);
+		// Accumulate derivatives
+		float dalpha_dfx = 0.0f;
+		float dalpha_dfy = 0.0f;
+		float dalpha_dfz = 0.0f;
+		// Loop over 4x4x4 neighborhood
+		const float base = dL_dalphas[idx];
+		for (int iz = 0; iz < 4; ++iz) {
+			float wz_i = wz[iz];
+			int z_i = zs[iz];
+			for (int iy = 0; iy < 4; ++iy) {
+				float wy_i = wy[iy];
+				int y_i = ys[iy];
+				int base_idx = z_i * R * R + y_i * R;
+				for (int ix = 0; ix < 4; ++ix) {
+					float wx_i = wx[ix];
+					int x_i = xs[ix];
+					int idx_op = OP_IDX(x_i, y_i, z_i);
+					float val = opacity_field[idx_op];
+					float wprod = wx_i * wy_i * wz_i;
+					// contribution to opacity input (pre-sigmoid)
+					float dalpha_dop = upstream_grad * wprod;
+					// Use accumulated per-Gaussian contribution 'base' (sum of G * dL_dalpha over pixels)
+					atomicAdd(&(dL_dopacity_field[idx_op]), base * dalpha_dop);
+					// derivatives w.r.t. fractional coords
+					dalpha_dfx += val * (dwx[ix] * wy_i * wz_i) * upstream_grad;
+					dalpha_dfy += val * (wx_i * dwy[iy] * wz_i) * upstream_grad;
+					dalpha_dfz += val * (wx_i * wy_i * dwz[iz]) * upstream_grad;
+				}
+			}
+		}
+		const float coord_scale = float(opacity_field_resolution) / (2.0f * scene_radius);
+		// Update means gradients (chain rule: fx,fy,fz depend on mean)
+		// Update means gradients (chain rule: fx,fy,fz depend on mean)
+		glm::vec3 dL_dmean2;
+		dL_dmean2.x = base * dalpha_dfx * coord_scale;
+		dL_dmean2.y = base * dalpha_dfy * coord_scale;
+		dL_dmean2.z = base * dalpha_dfz * coord_scale;
+		dL_dmeans[idx] += dL_dmean2;
+		// clear accumulator
+		dL_dalphas[idx] = 0.0f;
+		#undef OP_IDX
+	}
 }
 
 // Backward version of the rendering procedure.
 template <uint32_t C>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
-	const float3* __restrict__ means,
-	const float* __restrict__ opacity_field,
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
@@ -429,14 +513,10 @@ renderCUDA(
 	const float* __restrict__ colors,
 	const float* __restrict__ final_Ts,
 	const uint32_t* __restrict__ n_contrib,
-	const float* __restrict__ scene_center,
-	const float scene_radius,
-	const int opacity_field_resolution,
 	const float* __restrict__ dL_dpixels,
 	float3* __restrict__ dL_dmean2D,
-	float3* __restrict__ dL_dmeans,
 	float4* __restrict__ dL_dconic2D,
-	float* __restrict__ dL_dopacity_field,
+	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors)
 {
 	// We rasterize again. Compute necessary block info.
@@ -574,85 +654,8 @@ renderCUDA(
 			atomicAdd(&dL_dconic2D[global_id].y, -0.5f * gdx * d.y * dL_dG);
 			atomicAdd(&dL_dconic2D[global_id].w, -0.5f * gdy * d.y * dL_dG);
 
-			// Inverse 2D covariance and opacity neatly pack into one float4
-			float3 p_3D = means[global_id];
-			float3 bound_min = {scene_center[0] - scene_radius, scene_center[1] - scene_radius, scene_center[2] - scene_radius};
-			float3 bound_max = {scene_center[0] + scene_radius, scene_center[1] + scene_radius, scene_center[2] + scene_radius};
-			float3 p_voxel = {(p_3D.x - bound_min.x) / (scene_radius * 2.0f) * float(opacity_field_resolution),
-					(p_3D.y - bound_min.y) / (scene_radius * 2.0f) * float(opacity_field_resolution),
-					(p_3D.z - bound_min.z) / (scene_radius * 2.0f) * float(opacity_field_resolution)};
-			if(!(p_voxel.x < 0 || p_voxel.x >= float(opacity_field_resolution) || p_voxel.y < 0 || p_voxel.y >= float(opacity_field_resolution) || p_voxel.z < 0 || p_voxel.z >= float(opacity_field_resolution)))
-			{
-				int3 p_voxel_floor = {int(floorf(p_voxel.x)), int(floorf(p_voxel.y)), int(floorf(p_voxel.z))};
-				// printf("resolution: %d\np_3D: %f %f %f\nBACKWORD Voxel: %d, %d, %d\n", opacity_field_resolution, p_3D.x, p_3D.y, p_3D.z, p_voxel_floor.x, p_voxel_floor.y, p_voxel_floor.z);
-				int R = opacity_field_resolution + 1;
-				float fx = p_voxel.x - float(p_voxel_floor.x);
-				float fy = p_voxel.y - float(p_voxel_floor.y);
-				float fz = p_voxel.z - float(p_voxel_floor.z);
-
-				#define OP_IDX(x,y,z) ((z) * R * R + (y) * R + (x))
-				// Clamp indices to valid range [0, R-1]
-				int x0 = max(0, min(R - 1, p_voxel_floor.x));
-				int y0 = max(0, min(R - 1, p_voxel_floor.y));
-				int z0 = max(0, min(R - 1, p_voxel_floor.z));
-				int x1 = max(0, min(R - 1, p_voxel_floor.x + 1));
-				int y1 = max(0, min(R - 1, p_voxel_floor.y + 1));
-				int z1 = max(0, min(R - 1, p_voxel_floor.z + 1));
-
-				// Tricubic B-spline backward: match forward.cu implementation
-				// Compute 4 B-spline weights and their derivatives for fx, fy, fz
-
-				float wx[4], wy[4], wz[4];
-				float dwx[4], dwy[4], dwz[4];
-				bspline_weights_and_deriv_device(fx, wx, dwx);
-				bspline_weights_and_deriv_device(fy, wy, dwy);
-				bspline_weights_and_deriv_device(fz, wz, dwz);
-
-				// sample indices (match forward)
-				int xs[4] = { max(0, x0 - 1), x0, x1, min(R - 1, x1 + 1) };
-				int ys[4] = { max(0, y0 - 1), y0, y1, min(R - 1, y1 + 1) };
-				int zs[4] = { max(0, z0 - 1), z0, z1, min(R - 1, z1 + 1) };
-
-				float curr_opacity = conic_opacity[global_id].w;
-				float upstream_grad = curr_opacity * (1.0f - curr_opacity);
-
-				// Accumulate derivatives
-				float dalpha_dfx = 0.0f;
-				float dalpha_dfy = 0.0f;
-				float dalpha_dfz = 0.0f;
-
-				// Loop over 4x4x4 neighborhood
-				for (int iz = 0; iz < 4; ++iz) {
-					float wz_i = wz[iz];
-					int z_i = zs[iz];
-					for (int iy = 0; iy < 4; ++iy) {
-						float wy_i = wy[iy];
-						int y_i = ys[iy];
-						int base_idx = z_i * R * R + y_i * R;
-						for (int ix = 0; ix < 4; ++ix) {
-							float wx_i = wx[ix];
-							int x_i = xs[ix];
-							int idx_op = OP_IDX(x_i, y_i, z_i);
-							float val = opacity_field[idx_op];
-							float wprod = wx_i * wy_i * wz_i;
-							// contribution to opacity input (pre-sigmoid)
-							float dalpha_dop = upstream_grad * wprod;
-							atomicAdd(&(dL_dopacity_field[idx_op]), G * dL_dalpha * dalpha_dop);
-							// derivatives w.r.t. fractional coords
-							dalpha_dfx += val * (dwx[ix] * wy_i * wz_i) * upstream_grad;
-							dalpha_dfy += val * (wx_i * dwy[iy] * wz_i) * upstream_grad;
-							dalpha_dfz += val * (wx_i * wy_i * dwz[iz]) * upstream_grad;
-						}
-					}
-				}
-
-				const float coord_scale = float(opacity_field_resolution) / (2.0f * scene_radius);
-				// Update means gradients (chain rule: fx,fy,fz depend on mean)
-				atomicAdd(&(dL_dmeans[global_id].x), G * dL_dalpha * dalpha_dfx	* coord_scale);
-				atomicAdd(&(dL_dmeans[global_id].y), G * dL_dalpha * dalpha_dfy	* coord_scale);
-				atomicAdd(&(dL_dmeans[global_id].z), G * dL_dalpha * dalpha_dfz	* coord_scale);
-				#undef OP_IDX
-			}
+			// Update gradients w.r.t. opacity of the Gaussian
+			atomicAdd(&(dL_dopacity[global_id]), G * dL_dalpha);
 		}
 	}
 }
@@ -660,6 +663,11 @@ renderCUDA(
 void BACKWARD::preprocess(
 	int P, int D, int M,
 	const float3* means3D,
+	const float* opacity_field,
+	const float4* conic_opacity,
+	const float* scene_center,
+	const float scene_radius,
+	const int opacity_field_resolution,
 	const int* radii,
 	const float* shs,
 	const bool* clamped,
@@ -678,6 +686,8 @@ void BACKWARD::preprocess(
 	float* dL_dcolor,
 	float* dL_dcov3D,
 	float* dL_dsh,
+	float* dL_dalpha,
+	float* dL_dopacity_field,
 	glm::vec3* dL_dscale,
 	glm::vec4* dL_drot)
 {
@@ -705,6 +715,11 @@ void BACKWARD::preprocess(
 	preprocessCUDA<NUM_CHANNELS> << < (P + 255) / 256, 256 >> > (
 		P, D, M,
 		(float3*)means3D,
+		opacity_field,
+		conic_opacity,
+		scene_center,
+		scene_radius,	
+		opacity_field_resolution,
 		radii,
 		shs,
 		clamped,
@@ -718,14 +733,14 @@ void BACKWARD::preprocess(
 		dL_dcolor,
 		dL_dcov3D,
 		dL_dsh,
+		dL_dalpha,
+		dL_dopacity_field,
 		dL_dscale,
 		dL_drot);
 }
 
 void BACKWARD::render(
 	const dim3 grid, const dim3 block,
-	const float3* means,
-	const float* opacity_field,
 	const uint2* ranges,
 	const uint32_t* point_list,
 	int W, int H,
@@ -735,19 +750,13 @@ void BACKWARD::render(
 	const float* colors,
 	const float* final_Ts,
 	const uint32_t* n_contrib,
-	const float* scene_center,
-	const float scene_radius,
-	const int opacity_field_resolution,
 	const float* dL_dpixels,
 	float3* dL_dmean2D,
-	float3* dL_dmean3D,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
 	float* dL_dcolors)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
-		means,
-		opacity_field,
 		ranges,
 		point_list,
 		W, H,
@@ -757,12 +766,8 @@ void BACKWARD::render(
 		colors,
 		final_Ts,
 		n_contrib,
-		scene_center,
-		scene_radius,
-		opacity_field_resolution,
 		dL_dpixels,
 		dL_dmean2D,
-		dL_dmean3D,
 		dL_dconic2D,
 		dL_dopacity,
 		dL_dcolors

@@ -20,10 +20,12 @@ RasterizeGovsCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
     const torch::Tensor& colors,
+	const torch::Tensor& opacity,
     const torch::Tensor& opacity_field,
 	const torch::Tensor& scene_center,
 	const float scene_radius,
 	const int opacity_field_resolution,
+	const int opacity_sampling_type,
 	const torch::Tensor& scales,
 	const torch::Tensor& rotations,
 	const float scale_modifier,
@@ -40,10 +42,11 @@ RasterizeGovsCUDA(
 	const bool prefiltered,
 	const bool debug);
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
  RasterizeGovsBackwardCUDA(
  	const torch::Tensor& background,
 	const torch::Tensor& means3D,
+	const torch::Tensor& opacity,
 	const torch::Tensor& opacity_field,
 	const torch::Tensor& radii,
     const torch::Tensor& colors,
@@ -66,6 +69,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	const torch::Tensor& scene_center,
 	const float scene_radius,
 	const int opacity_field_resolution,
+	const int opacity_sampling_type,
 	const bool debug);
 		
 torch::Tensor markVisible(

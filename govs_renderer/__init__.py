@@ -38,6 +38,7 @@ def render(viewpoint_camera, govs : GovsModel, pipe, bg_color : torch.Tensor, sc
         image_height=int(viewpoint_camera.image_height),
         image_width=int(viewpoint_camera.image_width),
         opacity_field_resolution=int(govs.opacity_field_resolution),
+        opacity_sampling_type=1,
         scene_center=govs.scene_center,
         scene_radius=float(govs.scene_extent),
         tanfovx=tanfovx,
@@ -56,6 +57,7 @@ def render(viewpoint_camera, govs : GovsModel, pipe, bg_color : torch.Tensor, sc
 
     means3D = govs.get_xyz
     means2D = screenspace_points
+    opacity = govs.get_opacity_inactivation
     opacity_field = govs.get_opacity_field_inactivation
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
@@ -89,6 +91,7 @@ def render(viewpoint_camera, govs : GovsModel, pipe, bg_color : torch.Tensor, sc
     rendered_image, radii = rasterizer(
         means3D = means3D,
         means2D = means2D,
+        opacity =  opacity,
         opacity_filed = opacity_field,
         shs = shs,
         colors_precomp = colors_precomp,

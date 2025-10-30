@@ -23,6 +23,7 @@ def rasterize_govs(
     means2D,
     sh,
     colors_precomp,
+    opacity,
     opacity_field,
     scales,
     rotations,
@@ -34,6 +35,7 @@ def rasterize_govs(
         means2D,
         sh,
         colors_precomp,
+        opacity,
         opacity_field,
         scales,
         rotations,
@@ -49,6 +51,7 @@ class _RasterizeGovs(torch.autograd.Function):
         means2D,
         sh,
         colors_precomp,
+        opacity,
         opacity_field,
         scales,
         rotations,
@@ -61,10 +64,12 @@ class _RasterizeGovs(torch.autograd.Function):
             raster_settings.bg, 
             means3D,
             colors_precomp,
+            opacity,
             opacity_field,
             raster_settings.scene_center,
             raster_settings.scene_radius,
             raster_settings.opacity_field_resolution,
+            raster_settings.opacity_sampling_type,
             scales,
             rotations,
             raster_settings.scale_modifier,
@@ -97,7 +102,7 @@ class _RasterizeGovs(torch.autograd.Function):
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
-        ctx.save_for_backward(colors_precomp, means3D, opacity_field, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer)
+        ctx.save_for_backward(colors_precomp, means3D, opacity, opacity_field, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer)
         return color, radii
 
     @staticmethod
@@ -106,11 +111,12 @@ class _RasterizeGovs(torch.autograd.Function):
         # Restore necessary values from context
         num_rendered = ctx.num_rendered
         raster_settings = ctx.raster_settings
-        colors_precomp, means3D, opacity_field, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer = ctx.saved_tensors
+        colors_precomp, means3D, opacity, opacity_field, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer = ctx.saved_tensors
 
         # Restructure args as C++ method expects them
         args = (raster_settings.bg,
-                means3D, 
+                means3D,
+                opacity, 
                 opacity_field,
                 radii, 
                 colors_precomp, 
@@ -133,25 +139,27 @@ class _RasterizeGovs(torch.autograd.Function):
                 raster_settings.scene_center,
                 raster_settings.scene_radius,
                 raster_settings.opacity_field_resolution,
+                raster_settings.opacity_sampling_type,
                 raster_settings.debug)
 
         # Compute gradients for relevant tensors by invoking backward method
         if raster_settings.debug:
             cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
             try:
-                grad_means2D, grad_colors_precomp, grad_opacity_field, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations = _C.rasterize_govs_backward(*args)
+                grad_means2D, grad_colors_precomp, grad_opacity, grad_opacity_field, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations = _C.rasterize_govs_backward(*args)
             except Exception as ex:
                 torch.save(cpu_args, "snapshot_bw.dump")
                 print("\nAn error occured in backward. Writing snapshot_bw.dump for debugging.\n")
                 raise ex
         else:
-             grad_means2D, grad_colors_precomp, grad_opacity_field, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations = _C.rasterize_govs_backward(*args)
+             grad_means2D, grad_colors_precomp, grad_opacity, grad_opacity_field, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations = _C.rasterize_govs_backward(*args)
 
         grads = (
             grad_means3D,
             grad_means2D,
             grad_sh,
             grad_colors_precomp,
+            grad_opacity,
             grad_opacity_field,
             grad_scales,
             grad_rotations,
@@ -168,6 +176,7 @@ class GovsRasterizationSettings(NamedTuple):
     scene_center: torch.Tensor
     scene_radius: float 
     opacity_field_resolution: int
+    opacity_sampling_type: int
     tanfovx : float
     tanfovy : float
     bg : torch.Tensor
@@ -195,7 +204,7 @@ class GovsRasterizer(nn.Module):
             
         return visible
 
-    def forward(self, means3D, means2D, opacity_filed, shs = None, colors_precomp = None, scales = None, rotations = None, cov3D_precomp = None):
+    def forward(self, means3D, means2D, opacity, opacity_filed, shs = None, colors_precomp = None, scales = None, rotations = None, cov3D_precomp = None):
         
         raster_settings = self.raster_settings
 
@@ -223,6 +232,7 @@ class GovsRasterizer(nn.Module):
             means2D,
             shs,
             colors_precomp,
+            opacity,
             opacity_filed,
             scales, 
             rotations,

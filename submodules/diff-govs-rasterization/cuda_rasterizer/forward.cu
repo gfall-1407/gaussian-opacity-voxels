@@ -169,10 +169,12 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	const glm::vec3* scales,
 	const float scale_modifier,
 	const glm::vec4* rotations,
+	const float* opacity,
 	const float* opacity_field,
 	const float* scene_center,
 	const float scene_radius,
 	const int opacity_field_resolution,
+	const int opacity_sampling_type,
 	const float* shs,
 	bool* clamped,
 	const float* cov3D_precomp,
@@ -293,47 +295,73 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	int y1 = max(0, min(R - 1, p_voxel_floor.y + 1));
 	int z1 = max(0, min(R - 1, p_voxel_floor.z + 1));
 
-	// Tricubic B-spline interpolation (separable). We sample a 4x4x4
-	// neighborhood and apply cubic B-spline weights along each axis.
-	// Compute cubic B-spline weights for fractional coordinate t in [0,1).
-	float wx[4], wy[4], wz[4];
-	bspline_weights_device(fx, wx);
-	bspline_weights_device(fy, wy);
-	bspline_weights_device(fz, wz);
-
-	// Sample 4x4x4 values around the voxel floor (clamped indices x0..x1 computed earlier)
-	// We need indices for x: x0-1, x0, x1, x1+1 and similarly for y,z
-	int xs[4] = { max(0, x0 - 1), x0, x1, min(R - 1, x1 + 1) };
-	int ys[4] = { max(0, y0 - 1), y0, y1, min(R - 1, y1 + 1) };
-	int zs[4] = { max(0, z0 - 1), z0, z1, min(R - 1, z1 + 1) };
-
-	// Fetch the 64 corner values and accumulate weighted sum
+	// Support two opacity sampling modes:
+	// 1 = trilinear interpolation, 2 = tricubic B-spline (separable)
 	float opacity_final = 0.0f;
-	for (int iz = 0; iz < 4; iz++) {
-		float wz_i = wz[iz];
-		int zz_i = zs[iz];
-		for (int iy = 0; iy < 4; iy++) {
-			float wy_i = wy[iy];
-			int yy_i = ys[iy];
-			// compute linear indices for x samples
-			int base_idx = zz_i * R * R + yy_i * R;
-			float accum_x = 0.0f;
-			// unroll x loop explicitly for performance
-			float vx0 = opacity_field[base_idx + xs[0]];
-			float vx1 = opacity_field[base_idx + xs[1]];
-			float vx2 = opacity_field[base_idx + xs[2]];
-			float vx3 = opacity_field[base_idx + xs[3]];
-			accum_x = vx0 * wx[0] + vx1 * wx[1] + vx2 * wx[2] + vx3 * wx[3];
-			opacity_final += accum_x * wy_i * wz_i;
+	if (opacity_sampling_type == 1) {
+		// Trilinear interpolation using the floor and floor+1 voxels
+		float wx0 = 1.0f - fx, wx1 = fx;
+		float wy0 = 1.0f - fy, wy1 = fy;
+		float wz0 = 1.0f - fz, wz1 = fz;
+		// loop over z,y,x corners (8 samples)
+		int xs_t[2] = { x0, x1 };
+		int ys_t[2] = { y0, y1 };
+		int zs_t[2] = { z0, z1 };
+		for (int iz = 0; iz < 2; ++iz) {
+			float wz_i = (iz == 0) ? wz0 : wz1;
+			int zz_i = zs_t[iz];
+			for (int iy = 0; iy < 2; ++iy) {
+				float wy_i = (iy == 0) ? wy0 : wy1;
+				int yy_i = ys_t[iy];
+				int base_idx = zz_i * R * R + yy_i * R;
+				for (int ix = 0; ix < 2; ++ix) {
+					float wx_i = (ix == 0) ? wx0 : wx1;
+					int xx_i = xs_t[ix];
+					int idx_op = OP_IDX(xx_i, yy_i, zz_i);
+					opacity_final += opacity_field[idx_op] * wx_i * wy_i * wz_i;
+				}
+			}
+		}
+	}
+	else if(opacity_sampling_type == 2) {
+		// Tricubic B-spline interpolation (separable). We sample a 4x4x4
+		// neighborhood and apply cubic B-spline weights along each axis.
+		// Compute cubic B-spline weights for fractional coordinate t in [0,1).
+		float wx[4], wy[4], wz[4];
+		bspline_weights_device(fx, wx);
+		bspline_weights_device(fy, wy);
+		bspline_weights_device(fz, wz);
+
+		// Sample 4x4x4 values around the voxel floor (clamped indices x0..x1 computed earlier)
+		// We need indices for x: x0-1, x0, x1, x1+1 and similarly for y,z
+		int xs[4] = { max(0, x0 - 1), x0, x1, min(R - 1, x1 + 1) };
+		int ys[4] = { max(0, y0 - 1), y0, y1, min(R - 1, y1 + 1) };
+		int zs[4] = { max(0, z0 - 1), z0, z1, min(R - 1, z1 + 1) };
+
+		// Fetch the 64 corner values and accumulate weighted sum
+		for (int iz = 0; iz < 4; iz++) {
+			float wz_i = wz[iz];
+			int zz_i = zs[iz];
+			for (int iy = 0; iy < 4; iy++) {
+				float wy_i = wy[iy];
+				int yy_i = ys[iy];
+				// compute linear indices for x samples
+				int base_idx = zz_i * R * R + yy_i * R;
+				float accum_x = 0.0f;
+				// unroll x loop explicitly for performance
+				float vx0 = opacity_field[base_idx + xs[0]];
+				float vx1 = opacity_field[base_idx + xs[1]];
+				float vx2 = opacity_field[base_idx + xs[2]];
+				float vx3 = opacity_field[base_idx + xs[3]];
+				accum_x = vx0 * wx[0] + vx1 * wx[1] + vx2 * wx[2] + vx3 * wx[3];
+				opacity_final += accum_x * wy_i * wz_i;
+			}
 		}
 	}
 
 	// Apply numerically-stable sigmoid to map opacity into (0,1)
 	// Clamp input to avoid overflow in expf
 	float sig_in = opacity_final;
-	// const float SIG_CLAMP = 20.0f;
-	// if (sig_in > SIG_CLAMP) sig_in = SIG_CLAMP;
-	// else if (sig_in < -SIG_CLAMP) sig_in = -SIG_CLAMP;
 	opacity_final = 1.0f / (1.0f + expf(-sig_in));
 	#undef OP_IDX
 
@@ -490,10 +518,12 @@ void FORWARD::preprocess(int P, int D, int M,
 	const glm::vec3* scales,
 	const float scale_modifier,
 	const glm::vec4* rotations,
+	const float* opacity,
 	const float* opacity_field,
 	const float* scene_center,
 	const float scene_radius,
 	const int opacity_field_resolution,
+	const int opacity_sampling_type,
 	const float* shs,
 	bool* clamped,
 	const float* cov3D_precomp,
@@ -520,10 +550,12 @@ void FORWARD::preprocess(int P, int D, int M,
 		scales,
 		scale_modifier,
 		rotations,
+		opacity,
 		opacity_field,
 		scene_center,
 		scene_radius,
 		opacity_field_resolution,
+		opacity_sampling_type,
 		shs,
 		clamped,
 		cov3D_precomp,
