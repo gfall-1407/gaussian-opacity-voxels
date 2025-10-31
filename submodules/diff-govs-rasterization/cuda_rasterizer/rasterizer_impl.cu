@@ -433,6 +433,7 @@ void CudaRasterizer::Rasterizer::backward(
 		scene_center,
 		scene_radius,
 		opacity_field_resolution,
+		opacity_sampling_type,
 		radii,
 		shs,
 		geomState.clamped,

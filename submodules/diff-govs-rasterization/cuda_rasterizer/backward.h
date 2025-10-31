@@ -45,6 +45,7 @@ namespace BACKWARD
         const float* scene_center,
         const float scene_radius,
         const int opacity_field_resolution,
+        const int opacity_sampling_type,
         const int* radii,
         const float* shs,
         const bool* clamped,

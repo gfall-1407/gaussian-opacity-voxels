@@ -371,6 +371,7 @@ __global__ void preprocessCUDA(
 	const float* scene_center,
 	const float scene_radius,
 	const int opacity_field_resolution,
+	const int opacity_sampling_type,
 	const int* radii,
 	const float* shs,
 	const bool* clamped,
@@ -444,58 +445,108 @@ __global__ void preprocessCUDA(
 		int y1 = max(0, min(R - 1, p_voxel_floor.y + 1));
 		int z1 = max(0, min(R - 1, p_voxel_floor.z + 1));
 		// Tricubic B-spline backward: match forward.cu implementation
-		// Compute 4 B-spline weights and their derivatives for fx, fy, f
-		float wx[4], wy[4], wz[4];
-		float dwx[4], dwy[4], dwz[4];
-		bspline_weights_and_deriv_device(fx, wx, dwx);
-		bspline_weights_and_deriv_device(fy, wy, dwy);
-		bspline_weights_and_deriv_device(fz, wz, dwz);
-		// sample indices (match forward)
-		int xs[4] = { max(0, x0 - 1), x0, x1, min(R - 1, x1 + 1) };
-		int ys[4] = { max(0, y0 - 1), y0, y1, min(R - 1, y1 + 1) };
-		int zs[4] = { max(0, z0 - 1), z0, z1, min(R - 1, z1 + 1) };
-		float curr_opacity = conic_opacity[idx].w;
-		float upstream_grad = curr_opacity * (1.0f - curr_opacity);
-		// Accumulate derivatives
-		float dalpha_dfx = 0.0f;
-		float dalpha_dfy = 0.0f;
-		float dalpha_dfz = 0.0f;
-		// Loop over 4x4x4 neighborhood
-		const float base = dL_dalphas[idx];
-		for (int iz = 0; iz < 4; ++iz) {
-			float wz_i = wz[iz];
-			int z_i = zs[iz];
-			for (int iy = 0; iy < 4; ++iy) {
-				float wy_i = wy[iy];
-				int y_i = ys[iy];
-				int base_idx = z_i * R * R + y_i * R;
-				for (int ix = 0; ix < 4; ++ix) {
-					float wx_i = wx[ix];
-					int x_i = xs[ix];
-					int idx_op = OP_IDX(x_i, y_i, z_i);
-					float val = opacity_field[idx_op];
-					float wprod = wx_i * wy_i * wz_i;
-					// contribution to opacity input (pre-sigmoid)
-					float dalpha_dop = upstream_grad * wprod;
-					// Use accumulated per-Gaussian contribution 'base' (sum of G * dL_dalpha over pixels)
-					atomicAdd(&(dL_dopacity_field[idx_op]), base * dalpha_dop);
-					// derivatives w.r.t. fractional coords
-					dalpha_dfx += val * (dwx[ix] * wy_i * wz_i) * upstream_grad;
-					dalpha_dfy += val * (wx_i * dwy[iy] * wz_i) * upstream_grad;
-					dalpha_dfz += val * (wx_i * wy_i * dwz[iz]) * upstream_grad;
+		if (opacity_sampling_type == 1) {
+			// Trilinear backward derivative (8 neighbors)
+			int xs2[2] = { x0, x1 };
+			int ys2[2] = { y0, y1 };
+			int zs2[2] = { z0, z1 };
+			float wx2[2] = { 1.0f - fx, fx };
+			float wy2[2] = { 1.0f - fy, fy };
+			float wz2[2] = { 1.0f - fz, fz };
+			// derivatives of linear weights: dw = -1 for 0, +1 for 1
+			float dwx2[2] = { -1.0f, 1.0f };
+			float dwy2[2] = { -1.0f, 1.0f };
+			float dwz2[2] = { -1.0f, 1.0f };
+			float curr_opacity = conic_opacity[idx].w;
+			float upstream_grad = curr_opacity * (1.0f - curr_opacity);
+			float dalpha_dfx = 0.0f;
+			float dalpha_dfy = 0.0f;
+			float dalpha_dfz = 0.0f;
+			const float base = dL_dalphas[idx];
+			for (int iz = 0; iz < 2; ++iz) {
+				float wz_i = wz2[iz];
+				int z_i = zs2[iz];
+				for (int iy = 0; iy < 2; ++iy) {
+					float wy_i = wy2[iy];
+					int y_i = ys2[iy];
+					for (int ix = 0; ix < 2; ++ix) {
+						float wx_i = wx2[ix];
+						int x_i = xs2[ix];
+						int idx_op = OP_IDX(x_i, y_i, z_i);
+						float val = opacity_field[idx_op];
+						float wprod = wx_i * wy_i * wz_i;
+						float dalpha_dop = upstream_grad * wprod;
+						atomicAdd(&(dL_dopacity_field[idx_op]), base * dalpha_dop);
+						// accumulate derivatives wrt fractional coords
+						dalpha_dfx += val * (dwx2[ix] * wy_i * wz_i) * upstream_grad;
+						dalpha_dfy += val * (wx_i * dwy2[iy] * wz_i) * upstream_grad;
+						dalpha_dfz += val * (wx_i * wy_i * dwz2[iz]) * upstream_grad;
+					}
 				}
 			}
+			const float coord_scale = float(opacity_field_resolution) / (2.0f * scene_radius);
+			glm::vec3 dL_dmean2;
+			dL_dmean2.x = base * dalpha_dfx * coord_scale;
+			dL_dmean2.y = base * dalpha_dfy * coord_scale;
+			dL_dmean2.z = base * dalpha_dfz * coord_scale;
+			dL_dmeans[idx] += dL_dmean2;
+			// clear accumulator
+			dL_dalphas[idx] = 0.0f;
+		} else if(opacity_sampling_type == 2) {
+			// Tricubic B-spline backward: match forward.cu implementation
+			// Compute 4 B-spline weights and their derivatives for fx, fy, f
+			float wx[4], wy[4], wz[4];
+			float dwx[4], dwy[4], dwz[4];
+			bspline_weights_and_deriv_device(fx, wx, dwx);
+			bspline_weights_and_deriv_device(fy, wy, dwy);
+			bspline_weights_and_deriv_device(fz, wz, dwz);
+			// sample indices (match forward)
+			int xs[4] = { max(0, x0 - 1), x0, x1, min(R - 1, x1 + 1) };
+			int ys[4] = { max(0, y0 - 1), y0, y1, min(R - 1, y1 + 1) };
+			int zs[4] = { max(0, z0 - 1), z0, z1, min(R - 1, z1 + 1) };
+			float curr_opacity = conic_opacity[idx].w;
+			float upstream_grad = curr_opacity * (1.0f - curr_opacity);
+			// Accumulate derivatives
+			float dalpha_dfx = 0.0f;
+			float dalpha_dfy = 0.0f;
+			float dalpha_dfz = 0.0f;
+			// Loop over 4x4x4 neighborhood
+			const float base = dL_dalphas[idx];
+			for (int iz = 0; iz < 4; ++iz) {
+				float wz_i = wz[iz];
+				int z_i = zs[iz];
+				for (int iy = 0; iy < 4; ++iy) {
+					float wy_i = wy[iy];
+					int y_i = ys[iy];
+					int base_idx = z_i * R * R + y_i * R;
+					for (int ix = 0; ix < 4; ++ix) {
+						float wx_i = wx[ix];
+						int x_i = xs[ix];
+						int idx_op = OP_IDX(x_i, y_i, z_i);
+						float val = opacity_field[idx_op];
+						float wprod = wx_i * wy_i * wz_i;
+						// contribution to opacity input (pre-sigmoid)
+						float dalpha_dop = upstream_grad * wprod;
+						// Use accumulated per-Gaussian contribution 'base' (sum of G * dL_dalpha over pixels)
+						atomicAdd(&(dL_dopacity_field[idx_op]), base * dalpha_dop);
+						// derivatives w.r.t. fractional coords
+						dalpha_dfx += val * (dwx[ix] * wy_i * wz_i) * upstream_grad;
+						dalpha_dfy += val * (wx_i * dwy[iy] * wz_i) * upstream_grad;
+						dalpha_dfz += val * (wx_i * wy_i * dwz[iz]) * upstream_grad;
+					}
+				}
+			}
+			const float coord_scale = float(opacity_field_resolution) / (2.0f * scene_radius);
+			// Update means gradients (chain rule: fx,fy,fz depend on mean)
+			// Update means gradients (chain rule: fx,fy,fz depend on mean)
+			glm::vec3 dL_dmean2;
+			dL_dmean2.x = base * dalpha_dfx * coord_scale;
+			dL_dmean2.y = base * dalpha_dfy * coord_scale;
+			dL_dmean2.z = base * dalpha_dfz * coord_scale;
+			dL_dmeans[idx] += dL_dmean2;
+			// clear accumulator
+			dL_dalphas[idx] = 0.0f;
 		}
-		const float coord_scale = float(opacity_field_resolution) / (2.0f * scene_radius);
-		// Update means gradients (chain rule: fx,fy,fz depend on mean)
-		// Update means gradients (chain rule: fx,fy,fz depend on mean)
-		glm::vec3 dL_dmean2;
-		dL_dmean2.x = base * dalpha_dfx * coord_scale;
-		dL_dmean2.y = base * dalpha_dfy * coord_scale;
-		dL_dmean2.z = base * dalpha_dfz * coord_scale;
-		dL_dmeans[idx] += dL_dmean2;
-		// clear accumulator
-		dL_dalphas[idx] = 0.0f;
 		#undef OP_IDX
 	}
 }
@@ -668,6 +719,7 @@ void BACKWARD::preprocess(
 	const float* scene_center,
 	const float scene_radius,
 	const int opacity_field_resolution,
+	const int opacity_sampling_type,
 	const int* radii,
 	const float* shs,
 	const bool* clamped,
@@ -720,6 +772,7 @@ void BACKWARD::preprocess(
 		scene_center,
 		scene_radius,	
 		opacity_field_resolution,
+		opacity_sampling_type,
 		radii,
 		shs,
 		clamped,
