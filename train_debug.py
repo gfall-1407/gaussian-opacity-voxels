@@ -17,6 +17,9 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
+import skimage.measure
+import trimesh
+
 from PIL import Image
 import numpy as np
 
@@ -185,6 +188,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             #     print("\n[ITER {}] Saving Checkpoint".format(iteration))
             #     torch.save((govs.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
+            if iteration % 500 == 0:
+                ISO_VALUE = 0.0
+                grid_logits = govs.get_opacity_field().cpu().numpy()
+                verts, faces, normals, values = skimage.measure.marching_cubes(grid_logits, level=ISO_VALUE)
+                mesh = trimesh.Trimesh(vertices=verts, faces=faces, vertex_normals=normals)
+                mesh.export("test/mesh_" + str(iteration) + ".ply")
 
 if __name__ == "__main__":
     # Set up command line argument parser
