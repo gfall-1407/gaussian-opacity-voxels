@@ -189,9 +189,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             #     torch.save((govs.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
             if iteration % 500 == 0:
-                ISO_VALUE = 0.0
-                grid_logits = govs.get_opacity_field().cpu().numpy()
-                verts, faces, normals, values = skimage.measure.marching_cubes(grid_logits, level=ISO_VALUE)
+                ISO_VALUE = 0.5
+                grid = govs.get_opacity_field.detach().cpu().numpy()
+                grid = np.reshape(grid, (govs.opacity_field_resolution + 1, govs.opacity_field_resolution + 1, govs.opacity_field_resolution + 1))
+                verts, faces, normals, values = skimage.measure.marching_cubes(grid, level=ISO_VALUE)
                 mesh = trimesh.Trimesh(vertices=verts, faces=faces, vertex_normals=normals)
                 mesh.export("test/mesh_" + str(iteration) + ".ply")
 
