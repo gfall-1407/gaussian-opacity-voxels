@@ -246,6 +246,19 @@ class GovsModel:
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
+    
+    def save_as_ply(self, path):
+        mkdir_p(os.path.dirname(path))
+        xyz = self._xyz.detach().cpu().numpy()
+        # Create a simple dtype with only x,y,z float32
+        dtype_xyz = [('x', 'f4'), ('y', 'f4'), ('z', 'f4')]
+        elements = np.empty(xyz.shape[0], dtype=dtype_xyz)
+        elements['x'] = xyz[:, 0]
+        elements['y'] = xyz[:, 1]
+        elements['z'] = xyz[:, 2]
+        el = PlyElement.describe(elements, 'vertex')
+        PlyData([el]).write(path)
+
 
     def reset_opacity(self):
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
