@@ -136,7 +136,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             pipe.debug = True
         render_pkg = render(viewpoint_cam, govs, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        if iteration % 500 == 0:
+        if iteration % 2000 == 0:
             image_np = image.detach().cpu().numpy()
             image_np = np.transpose(image_np, (1, 2, 0))
             array = np.array(image_np*255.0, dtype=np.byte)  
@@ -153,7 +153,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         grid_field = flat_opacity_field.reshape(D, H, W, 1)
         grid_field_permuted = grid_field.permute(3, 0, 1, 2)
         tv_loss = compute_tv_loss_3d(grid_field_permuted)
-        lambda_tv = 0
+        lambda_tv = 0.1
         loss = loss + lambda_tv * tv_loss
         loss.backward()
          
