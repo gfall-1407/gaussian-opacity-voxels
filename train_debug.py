@@ -153,7 +153,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         grid_field = flat_opacity_field.reshape(D, H, W, 1)
         grid_field_permuted = grid_field.permute(3, 0, 1, 2)
         tv_loss = compute_tv_loss_3d(grid_field_permuted)
-        lambda_tv = 0.001
+        lambda_tv = 0
         loss = loss + lambda_tv * tv_loss
         loss.backward()
          
