@@ -14,6 +14,17 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from math import exp
 
+def compute_tv_loss_3d(field_tensor):
+    diff_d = field_tensor[..., 1:, :, :] - field_tensor[..., :-1, :, :]
+    diff_h = field_tensor[..., :, 1:, :] - field_tensor[..., :, :-1, :]
+    diff_w = field_tensor[..., :, :, 1:] - field_tensor[..., :, :, :-1]
+
+    loss_tv = torch.mean(torch.abs(diff_d)) + \
+              torch.mean(torch.abs(diff_h)) + \
+              torch.mean(torch.abs(diff_w))
+              
+    return loss_tv
+
 def l1_loss(network_output, gt):
     return torch.abs((network_output - gt)).mean()
 

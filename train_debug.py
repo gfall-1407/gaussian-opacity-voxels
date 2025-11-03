@@ -1,7 +1,7 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim
+from utils.loss_utils import l1_loss, ssim, compute_tv_loss_3d
 from govs_renderer import render
 import sys
 from scene import Scene, GovsModel
@@ -147,6 +147,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+
+        flat_opacity_field = govs.get_opacity_field
+        D = H = W = govs.opacity_field_resolution + 1
+        grid_field = flat_opacity_field.reshape(D, H, W, 1)
+        grid_field_permuted = grid_field.permute(3, 0, 1, 2)
+        tv_loss = compute_tv_loss_3d(grid_field_permuted)
+        lambda_tv = 0.001
+        loss = loss + lambda_tv * tv_loss
         loss.backward()
          
         iter_end.record()
