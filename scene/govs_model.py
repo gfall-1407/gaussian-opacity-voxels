@@ -250,6 +250,8 @@ class GovsModel:
     def save_as_ply(self, path):
         mkdir_p(os.path.dirname(path))
         xyz = self._xyz.detach().cpu().numpy()
+        scene_center = self.scene_center.detach().cpu().numpy()
+        xyz = (xyz - (scene_center - self.scene_extent)) / (2*self.scene_extent) * self.opacity_field_resolution
         # Create a simple dtype with only x,y,z float32
         dtype_xyz = [('x', 'f4'), ('y', 'f4'), ('z', 'f4')]
         elements = np.empty(xyz.shape[0], dtype=dtype_xyz)
