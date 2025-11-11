@@ -1,9 +1,11 @@
+import os
 import torch
 from torch import nn
 import numpy as np
 from simple_knn._C import distCUDA2
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
+from utils.system_utils import mkdir_p
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 from utils.general_utils import inverse_sigmoid, inverse_sigmoid_python, get_expon_lr_func, build_rotation
@@ -205,4 +207,15 @@ class GovsModel:
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
-
+        
+    def save_as_ply(self, path):
+        mkdir_p(os.path.dirname(path))
+        xyz = self._xyz.detach().cpu().numpy()
+        # Create a simple dtype with only x,y,z float32
+        dtype_xyz = [('x', 'f4'), ('y', 'f4'), ('z', 'f4')]
+        elements = np.empty(xyz.shape[0], dtype=dtype_xyz)
+        elements['x'] = xyz[:, 0]
+        elements['y'] = xyz[:, 1]
+        elements['z'] = xyz[:, 2]
+        el = PlyElement.describe(elements, 'vertex')
+        PlyData([el]).write(path)
