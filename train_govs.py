@@ -59,13 +59,26 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if (iteration - 1) == debug_from:
             pipe.debug = True
         render_pkg = render(viewpoint_cam, govs, pipe, background)
-        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        if iteration % 2000 == 0:
+        image, viewspace_point_tensor, visibility_filter, radii, depth_voxel, depth_gaussians = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["depth_voxel"], render_pkg["depth_gaussians"]
+        if iteration % 500 == 0:
             image_np = image.detach().cpu().numpy()
             image_np = np.transpose(image_np, (1, 2, 0))
             array = np.array(image_np*255.0, dtype=np.byte)  
             image_save = Image.fromarray(array, "RGB")  
             image_save.save("test/" + str(iteration) + ".png" )
+            
+            dg = depth_gaussians.detach().cpu().numpy()
+            dg = np.squeeze(dg, axis=0)
+            dg_min = dg.min()
+            dg_max = dg.max()
+            if dg_max > dg_min:
+                dg_norm = (dg - dg_min) / (dg_max - dg_min)
+            else:
+                dg_norm = np.zeros_like(dg)
+
+            dg_uint16 = (dg_norm * 65535.0).astype(np.uint16)
+            depth_img = Image.fromarray(dg_uint16, mode='I;16')
+            depth_img.save(f"test/depth_gaussians_{iteration}.png")
         
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -120,7 +133,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             #     print("\n[ITER {}] Saving Checkpoint".format(iteration))
             #     torch.save((govs.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
-            if iteration % 2000 == 0:
+            if iteration % 500 == 0:
                 ISO_VALUE = 0.5
                 grid = govs.get_opacity_field.detach().cpu().numpy()
                 grid = np.reshape(grid, (govs.opacity_field_resolution + 1, govs.opacity_field_resolution + 1, govs.opacity_field_resolution + 1))

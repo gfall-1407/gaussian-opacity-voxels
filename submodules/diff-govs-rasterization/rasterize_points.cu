@@ -21,7 +21,7 @@ std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
     return lambda;
 }
 
-std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGovsCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -62,6 +62,8 @@ RasterizeGovsCUDA(
 
     torch::Tensor out_color = torch::full({NUM_CHANNELS, H, W}, 0.0, float_opts);
     torch::Tensor radii = torch::full({P}, 0, means3D.options().dtype(torch::kInt32));
+	torch::Tensor out_depth_voxel = torch::full({1, H, W}, 0.0, float_opts);
+	torch::Tensor out_depth_gaussians = torch::full({1, H, W}, 0.0, float_opts);
 
     torch::Device device(torch::kCUDA);
     torch::TensorOptions options(torch::kByte);
@@ -108,10 +110,12 @@ RasterizeGovsCUDA(
     		tan_fovy,
     		prefiltered,
     		out_color.contiguous().data<float>(),
+			out_depth_voxel.contiguous().data<float>(),
+			out_depth_gaussians.contiguous().data<float>(),
     		radii.contiguous().data<int>(),
     		debug);
     }
-    return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer);
+    return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer, out_depth_voxel, out_depth_gaussians);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>

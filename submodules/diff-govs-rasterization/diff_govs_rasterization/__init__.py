@@ -87,16 +87,16 @@ class _RasterizeGovs(torch.autograd.Function):
                 print("\nAn error occured in forward. Please forward snapshot_fw.dump for debugging.")
                 raise ex
         else:
-            num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_govs(*args)
+            num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, depth_voxel, depth_gaussians = _C.rasterize_govs(*args)
 
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
         ctx.save_for_backward(colors_precomp, means3D, opacity, opacity_field, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer)
-        return color, radii
+        return color, radii, depth_voxel, depth_gaussians
     
     @staticmethod
-    def backward(ctx, grad_out_color, _):
+    def backward(ctx, grad_out_color, _, grad_out_depth_voxel, grad_out_depth_gaussians):
 
         # Restore necessary values from context
         num_rendered = ctx.num_rendered
