@@ -2,7 +2,7 @@ import torch
 import math
 from scene.govs_tcnn import GovsTCNNModel
 from utils.sh_utils import eval_sh
-from diff_govs_rasterization import GovsRasterizationSettings, GovsRasterizer
+from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 
 def render(viewpoint_camera, govs : GovsTCNNModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
     """
@@ -24,14 +24,9 @@ def render(viewpoint_camera, govs : GovsTCNNModel, pipe, bg_color : torch.Tensor
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
 
-    raster_settings = GovsRasterizationSettings(
+    raster_settings = GaussianRasterizationSettings(
         image_height=int(viewpoint_camera.image_height),
         image_width=int(viewpoint_camera.image_width),
-        scene_center=govs.scene_center,
-        scene_radius=float(govs.scene_extent),
-        opacity_field_resolution=int(govs.opacity_field_resolution),
-        opacity_sampling_type=1,
-        render_outside=1,
         tanfovx=tanfovx,
         tanfovy=tanfovy,
         bg=bg_color,
@@ -44,7 +39,7 @@ def render(viewpoint_camera, govs : GovsTCNNModel, pipe, bg_color : torch.Tensor
         debug=pipe.debug
     )
 
-    rasterizer = GovsRasterizer(raster_settings=raster_settings)
+    rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
     means3D = govs.get_xyz
     means2D = screenspace_points
@@ -79,13 +74,12 @@ def render(viewpoint_camera, govs : GovsTCNNModel, pipe, bg_color : torch.Tensor
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii, depth_voxel, depth_gaussians = rasterizer(
+    rendered_image, radii = rasterizer(
         means3D = means3D,
         means2D = means2D,
-        opacity =  opacity,
-        opacity_filed = opacity_field,
         shs = shs,
         colors_precomp = colors_precomp,
+        opacities = opacity,
         scales = scales,
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
@@ -95,6 +89,4 @@ def render(viewpoint_camera, govs : GovsTCNNModel, pipe, bg_color : torch.Tensor
     return {"render": rendered_image,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
-            "radii": radii,
-            "depth_voxel": depth_voxel,
-            "depth_gaussians": depth_gaussians}
+            "radii": radii}
