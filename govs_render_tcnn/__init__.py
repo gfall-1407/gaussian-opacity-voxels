@@ -10,11 +10,6 @@ def render(viewpoint_camera, govs : GovsTCNNModel, pipe, bg_color : torch.Tensor
     
     Background tensor (bg_color) must be on GPU!
     """
-    tcnn_output = govs._opacity_field(govs._xyz / 10.)
-    govs._opacity = tcnn_output.float() 
-    test_np = govs._opacity.cpu().numpy()
-
-    print(test_np.min(), test_np.max())
 
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(govs.get_xyz, dtype=govs.get_xyz.dtype, requires_grad=True, device="cuda") + 0

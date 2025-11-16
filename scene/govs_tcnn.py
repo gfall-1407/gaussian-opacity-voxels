@@ -49,7 +49,6 @@ class GovsTCNNModel():
         self._features_rest = torch.empty(0)
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
-        self._opacity = torch.empty(0)
         self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
@@ -61,25 +60,31 @@ class GovsTCNNModel():
             "encoding": {
                 "otype": "HashGrid",
                 "n_levels": 16,
-                "n_features_per_level": 2, 
+                "n_features_per_level": 2,
                 "log2_hashmap_size": 19,
                 "base_resolution": 16,
-                "per_level_scale": 2.0
+                "per_level_scale": 1.3819
             },
             "network": {
                 "otype": "FullyFusedMLP",
-                "activation": "ReLu",
-                "output_activation": "Sigmoid",
+                "activation": "ReLU",
+                "output_activation": "None",
                 "n_neurons": 64,
-                "n_hidden_layers": 1,
-                "precision": "float32"
+                "n_hidden_layers": 2,
             }
         }
-        self._opacity_field = tcnn.Network(
+        self._opacity_field = tcnn.NetworkWithInputEncoding(
             n_input_dims=3,
-            n_output_dims=1,
-            network_config=self.tcnn_config
-        ).to("cuda:0")
+            n_output_dims=3,
+            encoding_config=self.tcnn_config["encoding"],
+            network_config=self.tcnn_config["network"]).to("cuda:0")
+
+        # desired_biases = torch.tensor([0.1, 0.0, 3.0], dtype=torch.float32, device="cuda:0")
+        # params = list(self._opacity_field.parameters())
+        # final_layer_bias = params[-2]
+
+        # with torch.no_grad():
+        #     final_layer_bias.copy_(desired_biases)
 
         self.setup_functions()
 
@@ -103,8 +108,13 @@ class GovsTCNNModel():
     
     @property
     def get_opacity(self):
-        return self.opacity_activation(self._opacity)
-        # return self._opacity
+        means = self._xyz
+        raw_output = self._opacity_field(means/10.)
+        sdf_raw = raw_output[..., 0:1]
+        k_raw   = raw_output[..., 1:2]
+        s_raw   = raw_output[..., 2:3]
+        opacities = self.compute_alpha_from_fields(sdf_raw, k_raw, s_raw)
+        return opacities.float()
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
@@ -128,14 +138,11 @@ class GovsTCNNModel():
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
 
-        opacities = torch.zeros((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda")
-
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
-        self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def training_setup(self, training_args):
@@ -173,7 +180,7 @@ class GovsTCNNModel():
         normals = np.zeros_like(xyz)
         f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        opacities = self._opacity.detach().cpu().numpy()
+        opacities = self.get_opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
 
@@ -228,5 +235,12 @@ class GovsTCNNModel():
 
         self.active_sh_degree = self.max_sh_degree
 
-        # self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
-        # self.denom[update_filter] += 1
+    def compute_alpha_from_fields(self, sdf, k, s):
+        sdf = sdf.squeeze(-1)
+        k = k.squeeze(-1)
+        s = s.squeeze(-1)
+        alpha_values = torch.where(
+            sdf <= 0,
+            torch.sigmoid(k),
+            torch.sigmoid(k * torch.exp(-s * sdf)))
+        return alpha_values.unsqueeze(-1)
