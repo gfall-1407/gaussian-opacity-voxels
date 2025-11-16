@@ -68,15 +68,16 @@ class GovsTCNNModel():
             },
             "network": {
                 "otype": "FullyFusedMLP",
-                "activation": "ReLU",
-                "output_activation": "None",
+                "activation": "ReLu",
+                "output_activation": "Sigmoid",
                 "n_neurons": 64,
                 "n_hidden_layers": 1,
+                "precision": "float32"
             }
         }
         self._opacity_field = tcnn.Network(
             n_input_dims=3,
-            n_output_dims=2,
+            n_output_dims=1,
             network_config=self.tcnn_config
         ).to("cuda:0")
 
@@ -103,6 +104,7 @@ class GovsTCNNModel():
     @property
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
+        # return self._opacity
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
@@ -145,7 +147,7 @@ class GovsTCNNModel():
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
             {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
             {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
-            {'params': [self._opacity_field], 'lr': training_args.opacity_lr, "name": "opacity"},
+            {'params': self._opacity_field.parameters(), 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
         ]
@@ -226,5 +228,5 @@ class GovsTCNNModel():
 
         self.active_sh_degree = self.max_sh_degree
 
-        self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
-        self.denom[update_filter] += 1
+        # self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
+        # self.denom[update_filter] += 1

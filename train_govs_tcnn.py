@@ -3,7 +3,7 @@ import torch
 from tqdm import tqdm
 from random import randint
 from scene.govs_tcnn_scene import Scene, GovsTCNNModel
-from govs_render import render
+from govs_render_tcnn import render
 from utils.general_utils import safe_state
 from utils.loss_utils import l1_loss, ssim, compute_tv_loss_3d
 from argparse import ArgumentParser, Namespace
@@ -13,6 +13,8 @@ import skimage.measure
 import trimesh
 from PIL import Image
 import numpy as np
+
+from utils.general_utils import inverse_sigmoid_python
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
@@ -59,41 +61,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if (iteration - 1) == debug_from:
             pipe.debug = True
         render_pkg = render(viewpoint_cam, govs, pipe, background)
-        image, viewspace_point_tensor, visibility_filter, radii, depth_voxel, depth_gaussians = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["depth_voxel"], render_pkg["depth_gaussians"]
+        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         if iteration % 500 == 0:
             image_np = image.detach().cpu().numpy()
             image_np = np.transpose(image_np, (1, 2, 0))
             array = np.array(image_np*255.0, dtype=np.byte)  
             image_save = Image.fromarray(array, "RGB")  
             image_save.save("test/" + str(iteration) + ".png" )
-            
-            dg = depth_gaussians.detach().cpu().numpy()
-            dg = np.squeeze(dg, axis=0)
-            dg_min = dg.min()
-            dg_max = dg.max()
-            if dg_max > dg_min:
-                dg_norm = (dg - dg_min) / (dg_max - dg_min)
-            else:
-                dg_norm = np.zeros_like(dg)
-
-            dg_uint16 = (dg_norm * 65535.0).astype(np.uint16)
-            depth_img = Image.fromarray(dg_uint16, mode='I;16')
-            depth_img.save(f"test/depth_gaussians_{iteration}.png")
         
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
 
-        flat_opacity_field = govs.get_opacity_field
-        D = H = W = govs.opacity_field_resolution + 1
-        grid_field = flat_opacity_field.reshape(D, H, W, 1)
-        grid_field_permuted = grid_field.permute(3, 0, 1, 2)
-        tv_loss = compute_tv_loss_3d(grid_field_permuted)
-        lambda_tv = 0.1
-        loss = loss + lambda_tv * tv_loss
         loss.backward()
-         
+
         iter_end.record()
 
         with torch.no_grad():
@@ -134,13 +116,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             #     torch.save((govs.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
             if iteration % 500 == 0:
-                ISO_VALUE = 0.5
-                grid = govs.get_opacity_field.detach().cpu().numpy()
-                grid = np.reshape(grid, (govs.opacity_field_resolution + 1, govs.opacity_field_resolution + 1, govs.opacity_field_resolution + 1))
-                verts, faces, normals, values = skimage.measure.marching_cubes(grid, level=ISO_VALUE)
-                mesh = trimesh.Trimesh(vertices=verts, faces=faces, vertex_normals=normals)
-                mesh.export("test/mesh_" + str(iteration) + ".ply")
-                govs.save_as_ply("test/govs_" + str(iteration) + ".ply")
+                GRID_SIZE = 128
+                t = torch.linspace(0, 1, GRID_SIZE, device="cuda")
+                grid_x, grid_y, grid_z = torch.meshgrid(t, t, t, indexing="ij")
+                grid_xyz = torch.stack([grid_x, grid_y, grid_z], dim=-1).reshape(-1, 3)
+                sdf_values = []
+                for batch in grid_xyz.split(8192):
+                    sdf_values.append(govs._opacity_field(batch).float())
+                sdf_volume = torch.cat(sdf_values).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE).cpu().numpy()
+                print(sdf_volume.min(), sdf_volume.max())
+                #verts, faces, _, _ = skimage.measure.marching_cubes(sdf_volume, level=0)
+                #mesh = trimesh.Trimesh(vertices=verts, faces=faces)
+                #mesh.export("output_mesh_"+ str(iteration) +".ply")
 
 if __name__ == "__main__":
     # Set up command line argument parser

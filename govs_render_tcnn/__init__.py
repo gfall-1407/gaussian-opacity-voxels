@@ -10,8 +10,11 @@ def render(viewpoint_camera, govs : GovsTCNNModel, pipe, bg_color : torch.Tensor
     
     Background tensor (bg_color) must be on GPU!
     """
+    tcnn_output = govs._opacity_field(govs._xyz / 10.)
+    govs._opacity = tcnn_output.float() 
+    test_np = govs._opacity.cpu().numpy()
 
-    govs._opacity = govs._opacity_field(govs._xyz / 10.)
+    print(test_np.min(), test_np.max())
 
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(govs.get_xyz, dtype=govs.get_xyz.dtype, requires_grad=True, device="cuda") + 0
@@ -43,8 +46,7 @@ def render(viewpoint_camera, govs : GovsTCNNModel, pipe, bg_color : torch.Tensor
 
     means3D = govs.get_xyz
     means2D = screenspace_points
-    opacity = govs.get_opacity_inactivation
-    opacity_field = govs.get_opacity_field_inactivation
+    opacity = govs.get_opacity
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.

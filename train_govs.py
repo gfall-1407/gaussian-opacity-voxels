@@ -69,14 +69,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             
             dg = depth_gaussians.detach().cpu().numpy()
             dg = np.squeeze(dg, axis=0)
-            dg_min = dg.min()
-            dg_max = dg.max()
-            if dg_max > dg_min:
-                dg_norm = (dg - dg_min) / (dg_max - dg_min)
-            else:
-                dg_norm = np.zeros_like(dg)
-
-            dg_uint16 = (dg_norm * 65535.0).astype(np.uint16)
+            dg_uint16 = (dg * 50000.0).astype(np.uint16)
             depth_img = Image.fromarray(dg_uint16, mode='I;16')
             depth_img.save(f"test/depth_gaussians_{iteration}.png")
         
