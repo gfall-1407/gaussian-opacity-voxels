@@ -75,7 +75,7 @@ class GovsTCNNModel():
         }
         self._opacity_field = tcnn.NetworkWithInputEncoding(
             n_input_dims=3,
-            n_output_dims=1,
+            n_output_dims=2,
             encoding_config=self.tcnn_config["encoding"],
             network_config=self.tcnn_config["network"]).to("cuda:0")
 
@@ -109,7 +109,7 @@ class GovsTCNNModel():
     @property
     def get_opacity(self):
         means = self._xyz
-        means = (means - self._min_bound.values[None, :]) / (self._pc_bound.values[None, :] + 1e-6)
+        means = (means - self._min_bound[None, :]) / (self._pc_bound[None, :] + 1e-6)
         raw_output = self._opacity_field(means)
         sdf_raw = raw_output[..., 0:1]
         k_raw   = raw_output[..., 1:2]
@@ -145,8 +145,8 @@ class GovsTCNNModel():
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-        self._min_bound = torch.min(self.get_xyz, dim=0).values
-        self._max_bound = torch.max(self.get_xyz, dim=0).values
+        self._min_bound = torch.min(self._xyz.detach(), dim=0).values
+        self._max_bound = torch.max(self._xyz.detach(), dim=0).values
         self._pc_bound = self._max_bound - self._min_bound
     
     def training_setup(self, training_args):

@@ -124,7 +124,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 for batch in grid_xyz.split(8192):
                     sdf_values.append(govs._opacity_field(batch).float())
                 sdf_volume = torch.cat(sdf_values).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE).cpu().numpy()
-                print(sdf_volume.min(), sdf_volume.max())
+                # print(sdf_volume.min(), sdf_volume.max())
                 #verts, faces, _, _ = skimage.measure.marching_cubes(sdf_volume, level=0)
                 #mesh = trimesh.Trimesh(vertices=verts, faces=faces)
                 #mesh.export("output_mesh_"+ str(iteration) +".ply")
