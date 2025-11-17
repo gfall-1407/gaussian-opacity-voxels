@@ -73,10 +73,9 @@ class GovsTCNNModel():
                 "n_hidden_layers": 1,
             }
         }
-        #self._opacity_field = tcnn.NetworkWithInputEncoding(
-        self._opacity_field = tcnn.Network(
+        self._opacity_field = tcnn.NetworkWithInputEncoding(
             n_input_dims=3,
-            n_output_dims=3,
+            n_output_dims=2,
             encoding_config=self.tcnn_config["encoding"],
             network_config=self.tcnn_config["network"]).to("cuda:0")
 
