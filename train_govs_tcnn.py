@@ -74,6 +74,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
 
+        sdf = govs.get_sdf
+        target_zeros = torch.zeros_like(sdf)
+        loss_fn_l1 = torch.nn.L1Loss()
+        loss_l1_alt = loss_fn_l1(sdf, target_zeros)
+        loss += 0.5 * loss_l1_alt
+
         loss.backward()
 
         iter_end.record()
@@ -121,13 +127,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 grid_x, grid_y, grid_z = torch.meshgrid(t, t, t, indexing="ij")
                 grid_xyz = torch.stack([grid_x, grid_y, grid_z], dim=-1).reshape(-1, 3)
                 sdf_values = []
-                for batch in grid_xyz.split(8192):
-                    sdf_values.append(govs._opacity_field(batch).float())
+                sdf_values.append(govs._opacity_field(grid_xyz)[..., 0:1].float())
+                sdf = sdf_values[0].reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE).cpu().numpy()
                 # sdf_volume = torch.cat(sdf_values).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE).cpu().numpy()
                 # print(sdf_volume.min(), sdf_volume.max())
-                #verts, faces, _, _ = skimage.measure.marching_cubes(sdf_volume, level=0)
-                #mesh = trimesh.Trimesh(vertices=verts, faces=faces)
-                #mesh.export("output_mesh_"+ str(iteration) +".ply")
+                verts, faces, _, _ = skimage.measure.marching_cubes(sdf, level=0)
+                mesh = trimesh.Trimesh(vertices=verts, faces=faces)
+                mesh.export("test/output_mesh_"+ str(iteration) +".ply")
 
 if __name__ == "__main__":
     # Set up command line argument parser
