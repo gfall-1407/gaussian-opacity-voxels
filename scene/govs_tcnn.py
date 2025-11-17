@@ -63,21 +63,24 @@ class GovsTCNNModel():
                 "n_features_per_level": 2,
                 "log2_hashmap_size": 19,
                 "base_resolution": 16,
-                "per_level_scale": 1.3819
+                "per_level_scale": 2
             },
             "network": {
                 "otype": "FullyFusedMLP",
                 "activation": "ReLU",
                 "output_activation": "None",
                 "n_neurons": 64,
-                "n_hidden_layers": 2,
+                "n_hidden_layers": 1,
             }
         }
-        self._opacity_field = tcnn.NetworkWithInputEncoding(
+        #self._opacity_field = tcnn.NetworkWithInputEncoding(
+        self._opacity_field = tcnn.Network(
             n_input_dims=3,
-            n_output_dims=3,
-            encoding_config=self.tcnn_config["encoding"],
-            network_config=self.tcnn_config["network"]).to("cuda:0")
+            n_output_dims=1,
+            #encoding_config=self.tcnn_config["encoding"],
+            #network_config=self.tcnn_config["network"]
+            network_config=self.tcnn_config
+            ).to("cuda:0")
 
         # desired_biases = torch.tensor([0.1, 0.0, 3.0], dtype=torch.float32, device="cuda:0")
         # params = list(self._opacity_field.parameters())
@@ -109,12 +112,12 @@ class GovsTCNNModel():
     @property
     def get_opacity(self):
         means = self._xyz
-        raw_output = self._opacity_field(means/10.)
+        raw_output = self._opacity_field(means)
         sdf_raw = raw_output[..., 0:1]
-        k_raw   = raw_output[..., 1:2]
-        s_raw   = raw_output[..., 2:3]
-        opacities = self.compute_alpha_from_fields(sdf_raw, k_raw, s_raw)
-        return opacities.float()
+        #k_raw   = raw_output[..., 1:2]
+        #s_raw   = raw_output[..., 2:3]
+        #opacities = self.compute_alpha_from_fields(sdf_raw, k_raw, s_raw)
+        return torch.sigmoid(sdf_raw.float())
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
@@ -243,4 +246,5 @@ class GovsTCNNModel():
             sdf <= 0,
             torch.sigmoid(k),
             torch.sigmoid(k * torch.exp(-s * sdf)))
+        print(torch.sigmoid(k).cpu().detach().numpy().mean())
         return alpha_values.unsqueeze(-1)
