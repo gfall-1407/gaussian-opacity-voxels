@@ -75,7 +75,7 @@ class GovsTCNNModel():
         }
         self._opacity_field = tcnn.NetworkWithInputEncoding(
             n_input_dims=3,
-            n_output_dims=2,
+            n_output_dims=1,
             encoding_config=self.tcnn_config["encoding"],
             network_config=self.tcnn_config["network"]).to("cuda:0")
 
@@ -112,9 +112,9 @@ class GovsTCNNModel():
         means = (means - self._min_bound[None, :]) / (self._pc_bound[None, :] + 1e-6)
         raw_output = self._opacity_field(means)
         sdf_raw = raw_output[..., 0:1]
-        k_raw   = raw_output[..., 1:2]
-        opacities = self.compute_alpha_from_fields(sdf_raw, k_raw)
-        return opacities.float()
+        #k_raw   = raw_output[..., 1:2]
+        #opacities = self.compute_alpha_from_fields(sdf_raw, k_raw)
+        return torch.sigmoid(sdf_raw).float()
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
