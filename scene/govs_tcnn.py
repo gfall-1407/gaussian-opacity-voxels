@@ -109,7 +109,7 @@ class GovsTCNNModel():
     @property
     def get_opacity(self):
         means = self._xyz
-        means = (means - self._min_bound.values[None, :]) / (self._pc_bound.values[None, :] + 1e-6)
+        means = (means - self._min_bound[None, :]) / (self._pc_bound[None, :] + 1e-6)
         raw_output = self._opacity_field(means)
         sdf_raw = raw_output[..., 0:1]
         k_raw   = raw_output[..., 1:2]
