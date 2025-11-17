@@ -63,7 +63,7 @@ class GovsTCNNModel():
                 "n_features_per_level": 2,
                 "log2_hashmap_size": 19,
                 "base_resolution": 16,
-                "per_level_scale": 1.3819
+                "per_level_scale": 1.5
             },
             "network": {
                 "otype": "FullyFusedMLP",
@@ -75,7 +75,7 @@ class GovsTCNNModel():
         }
         self._opacity_field = tcnn.NetworkWithInputEncoding(
             n_input_dims=3,
-            n_output_dims=3,
+            n_output_dims=1,
             encoding_config=self.tcnn_config["encoding"],
             network_config=self.tcnn_config["network"]).to("cuda:0")
 
@@ -109,11 +109,11 @@ class GovsTCNNModel():
     @property
     def get_opacity(self):
         means = self._xyz
-        raw_output = self._opacity_field(means/10.)
+        means = (means - self._min_bound.values[None, :]) / (self._pc_bound.values[None, :] + 1e-6)
+        raw_output = self._opacity_field(means)
         sdf_raw = raw_output[..., 0:1]
         k_raw   = raw_output[..., 1:2]
-        s_raw   = raw_output[..., 2:3]
-        opacities = self.compute_alpha_from_fields(sdf_raw, k_raw, s_raw)
+        opacities = self.compute_alpha_from_fields(sdf_raw, k_raw)
         return opacities.float()
     
     def get_covariance(self, scaling_modifier = 1):
@@ -145,6 +145,10 @@ class GovsTCNNModel():
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
+        self._min_bound = torch.min(self.get_xyz, dim=0).values
+        self._max_bound = torch.max(self.get_xyz, dim=0).values
+        self._pc_bound = self._max_bound - self._min_bound
+    
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -235,12 +239,11 @@ class GovsTCNNModel():
 
         self.active_sh_degree = self.max_sh_degree
 
-    def compute_alpha_from_fields(self, sdf, k, s):
+    def compute_alpha_from_fields(self, sdf, k):
         sdf = sdf.squeeze(-1)
         k = k.squeeze(-1)
-        s = s.squeeze(-1)
         alpha_values = torch.where(
             sdf <= 0,
             torch.sigmoid(k),
-            torch.sigmoid(k * torch.exp(-s * sdf)))
+            torch.sigmoid(k * torch.exp(-sdf)))
         return alpha_values.unsqueeze(-1)
