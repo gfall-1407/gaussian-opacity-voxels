@@ -145,8 +145,8 @@ class GovsTCNNModel():
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-        self._min_bound = torch.min(self.get_xyz, dim=0).values
-        self._max_bound = torch.max(self.get_xyz, dim=0).values
+        self._min_bound = torch.min(self._xyz.detach(), dim=0).values
+        self._max_bound = torch.max(self._xyz.detach(), dim=0).values
         self._pc_bound = self._max_bound - self._min_bound
     
     def training_setup(self, training_args):
