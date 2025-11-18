@@ -80,6 +80,31 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         loss_l1_alt = loss_fn_l1(sdf, target_zeros)
         loss += 0.5 * loss_l1_alt
 
+        p_gauss_detached = govs.get_xyz_bound.detach()
+        N_free = 4096
+        p_free = torch.rand(N_free, 3, device=p_gauss_detached.device)
+        p_samples = torch.cat([p_gauss_detached, p_free], dim=0)
+        p_samples.requires_grad_(False)
+        epsilon = 1e-4
+        perturb_vectors = torch.tensor([
+            [epsilon, 0, 0], [-epsilon, 0, 0],
+            [0, epsilon, 0], [0, -epsilon, 0],
+            [0, 0, epsilon], [0, 0, -epsilon]
+        ], device=p_samples.device).float()
+        all_perturbed_points = p_samples.unsqueeze(1) + perturb_vectors.unsqueeze(0)
+        all_perturbed_points_flat = all_perturbed_points.view(-1, 3)
+        sdf_values = govs._opacity_field(all_perturbed_points_flat)
+        sdf_values_grouped = sdf_values.reshape(-1, 6)
+        grad_x = (sdf_values_grouped[:, 0] - sdf_values_grouped[:, 1]) / (2 * epsilon) # Shape [N]
+        grad_y = (sdf_values_grouped[:, 2] - sdf_values_grouped[:, 3]) / (2 * epsilon) # Shape [N]
+        grad_z = (sdf_values_grouped[:, 4] - sdf_values_grouped[:, 5]) / (2 * epsilon) # Shape [N]
+        gradients_numerical = torch.stack([grad_x, grad_y, grad_z], dim=-1)
+        gradient_norms = torch.linalg.norm(gradients_numerical, dim=-1)
+
+        eikonal_loss = ((gradient_norms - 1.0) ** 2).mean()
+
+        loss += 0.1 * eikonal_loss
+
         loss.backward()
 
         iter_end.record()

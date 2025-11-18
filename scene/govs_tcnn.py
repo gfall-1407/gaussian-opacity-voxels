@@ -101,6 +101,12 @@ class GovsTCNNModel():
         return self._xyz
     
     @property
+    def get_xyz_bound(self):
+        means = self._xyz
+        means = (means - self._min_bound[None, :]) / (self._pc_bound[None, :] + 1e-6)
+        return means
+    
+    @property
     def get_features(self):
         features_dc = self._features_dc
         features_rest = self._features_rest
