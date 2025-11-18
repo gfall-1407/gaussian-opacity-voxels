@@ -73,7 +73,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         image, depths, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["depth"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         
-        if (iteration - 1) % 1 == 0:
+        if (iteration - 1) % 500 == 0:
             image_np = image.detach().cpu().numpy()
             image_np = np.transpose(image_np, (1, 2, 0))
             array = np.array(image_np*255.0, dtype=np.byte)  
@@ -84,8 +84,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             D_map = D_np.squeeze()
             median_depth = depths.detach().cpu().numpy()[1:2,:,:]
             mD_map = median_depth.squeeze()
-            plt.imsave('test/D.png', D_map, cmap='plasma')
-            plt.imsave('test/mD.png', mD_map, cmap='plasma')
+            plt.imsave('test/D_' + str(iteration) +'.png', D_map, cmap='plasma')
+            plt.imsave('test/mD_' + str(iteration) + '.png', mD_map, cmap='plasma')
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
