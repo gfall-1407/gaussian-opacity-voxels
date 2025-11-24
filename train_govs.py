@@ -71,18 +71,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if (iteration - 1) == debug_from:
             pipe.debug = True
         render_pkg = render(viewpoint_cam, gaussians, pipe, background)
-        image, depths, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["depth"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        rendering, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["depth"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         
+        image = rendering[:3, :, :]
+        mD_image = rendering[5:6, :, :]
+        D_image = rendering[9:, :, :]
+
         if (iteration - 1) % 500 == 0:
             image_np = image.detach().cpu().numpy()
             image_np = np.transpose(image_np, (1, 2, 0))
             array = np.array(image_np*255.0, dtype=np.byte)  
             image_save = Image.fromarray(array, "RGB")  
-            image_save.save("test/" + str(iteration) + ".png" )
-
-            D_np = depths.detach().cpu().numpy()[0:1,:,:]
+            image_save.save("test/output_" + str(iteration) + ".png" )
+            D_np = D_image.detach().cpu().numpy()[0:1,:,:]
             D_map = D_np.squeeze()
-            median_depth = depths.detach().cpu().numpy()[1:2,:,:]
+            median_depth = mD_image.detach().cpu().numpy()[1:2,:,:]
             mD_map = median_depth.squeeze()
             plt.imsave('test/D_' + str(iteration) +'.png', D_map, cmap='plasma')
             plt.imsave('test/mD_' + str(iteration) + '.png', mD_map, cmap='plasma')
@@ -90,7 +93,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        rgb_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        
+        # depth distortion regularization
+        distortion_map = rendering[8, :, :]
+        # edge aware regularization is not really helpful so we disable it
+        # distortion_map = get_edge_aware_distortion_map(gt_image, distortion_map)
+        distortion_loss = distortion_map.mean()
+        lambda_distortion = opt.lambda_distortion if iteration >= opt.distortion_from_iter else 0.0
+        loss = rgb_loss + distortion_loss * lambda_distortion
         loss.backward()
 
         iter_end.record()
