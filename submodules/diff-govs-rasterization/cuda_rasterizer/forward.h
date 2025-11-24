@@ -31,6 +31,7 @@ namespace FORWARD
 		bool* clamped,
 		const float* cov3D_precomp,
 		const float* colors_precomp,
+		const float* view2gaussian_precomp,
 		const float* viewmatrix,
 		const float* projmatrix,
 		const glm::vec3* cam_pos,
@@ -41,6 +42,7 @@ namespace FORWARD
 		float2* points_xy_image,
 		float* depths,
 		float* cov3Ds,
+		float* view2gaussians,
 		float* colors,
 		float4* conic_opacity,
 		const dim3 grid,
@@ -53,15 +55,22 @@ namespace FORWARD
 		const uint2* ranges,
 		const uint32_t* point_list,
 		int W, int H,
+		float focal_x, float focal_y,
 		const float2* points_xy_image,
 		const float* features,
-		const float4* conic_opacity,
+		const float* view2gaussian,
+		const float* cov3Ds,
+		const float* viewmatrix,
+		const float3* means3D,
+		const float3* scales,
 		const float* depths,
+		const float4* conic_opacity,
 		float* final_T,
 		uint32_t* n_contrib,
+		float* center_depth,
+		float4* center_alphas,
 		const float* bg_color,
-		float* out_color,
-		float* out_depth);
+		float* out_color);
 }
 
 

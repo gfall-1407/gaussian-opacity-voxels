@@ -25,17 +25,28 @@ namespace BACKWARD
 		const uint2* ranges,
 		const uint32_t* point_list,
 		int W, int H,
+		float focal_x, float focal_y,
 		const float* bg_color,
 		const float2* means2D,
 		const float4* conic_opacity,
 		const float* colors,
+		const float* view2gaussian,
+		const float* cov3Ds,
+		const float* viewmatrix,
+		const float3* means3D,
+		const float3* scales,
+		const float* depths,
 		const float* final_Ts,
 		const uint32_t* n_contrib,
+		const float* center_depth,
+		const float4* point_alphas,
 		const float* dL_dpixels,
 		float3* dL_dmean2D,
 		float4* dL_dconic2D,
 		float* dL_dopacity,
-		float* dL_dcolors);
+		float* dL_dcolors,
+		float* dL_dscales,
+		float* dL_dview2gaussian);
 
 	void preprocess(
 		int P, int D, int M,
@@ -47,19 +58,23 @@ namespace BACKWARD
 		const glm::vec4* rotations,
 		const float scale_modifier,
 		const float* cov3Ds,
+		const float* view2gaussian,
 		const float* view,
 		const float* proj,
 		const float focal_x, float focal_y,
 		const float tan_fovx, float tan_fovy,
 		const glm::vec3* campos,
-		const float3* dL_dmean2D,
+		float3* dL_dmean2D,
 		const float* dL_dconics,
+		const float* dL_dview2gaussian,
 		glm::vec3* dL_dmeans,
 		float* dL_dcolor,
 		float* dL_dcov3D,
 		float* dL_dsh,
 		glm::vec3* dL_dscale,
-		glm::vec4* dL_drot);
+		glm::vec4* dL_drot,
+		const float4* conic_opacity,
+		float* dL_dopacity);
 }
 
 #endif

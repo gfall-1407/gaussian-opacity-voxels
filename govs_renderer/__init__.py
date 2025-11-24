@@ -64,6 +64,11 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     else:
         scales = pc.get_scaling
         rotations = pc.get_rotation
+    
+    view2gaussian_precomp = None
+    # pipe.compute_view2gaussian_python = True
+    if pipe.compute_view2gaussian_python:
+        view2gaussian_precomp = pc.get_view2gaussian(raster_settings.viewmatrix)
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
@@ -82,7 +87,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, depth_image, radii = rasterizer(
+    rendered_image, radii = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -90,12 +95,12 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         opacities = opacity,
         scales = scales,
         rotations = rotations,
-        cov3D_precomp = cov3D_precomp)
+        cov3D_precomp = cov3D_precomp,
+        view2gaussian_precomp = view2gaussian_precomp)
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {"render": rendered_image,
-            "depth": depth_image,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
             "radii": radii}

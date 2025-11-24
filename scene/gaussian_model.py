@@ -116,6 +116,66 @@ class GaussianModel:
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
+    
+    def get_view2gaussian(self, viewmatrix):
+        r = self._rotation
+        norm = torch.sqrt(r[:,0]*r[:,0] + r[:,1]*r[:,1] + r[:,2]*r[:,2] + r[:,3]*r[:,3])
+
+        q = r / norm[:, None]
+        
+        R = torch.zeros((q.size(0), 3, 3), device='cuda')
+
+        r = q[:, 0]
+        x = q[:, 1]
+        y = q[:, 2]
+        z = q[:, 3]
+
+        R[:, 0, 0] = 1 - 2 * (y*y + z*z)
+        R[:, 0, 1] = 2 * (x*y - r*z)
+        R[:, 0, 2] = 2 * (x*z + r*y)
+        R[:, 1, 0] = 2 * (x*y + r*z)
+        R[:, 1, 1] = 1 - 2 * (x*x + z*z)
+        R[:, 1, 2] = 2 * (y*z - r*x)
+        R[:, 2, 0] = 2 * (x*z - r*y)
+        R[:, 2, 1] = 2 * (y*z + r*x)
+        R[:, 2, 2] = 1 - 2 * (x*x + y*y)
+    
+        rots = R
+        xyz = self.get_xyz
+        N = xyz.shape[0]
+        G2W = torch.zeros((N, 4, 4), device='cuda')
+        G2W[:, :3, :3] = rots # TODO check if we need to transpose here
+        G2W[:, :3, 3] = xyz
+        G2W[:, 3, 3] = 1.0
+        
+        viewmatrix = viewmatrix.transpose(0, 1)
+        G2V = viewmatrix @ G2W
+        
+        R = G2V[:, :3, :3]
+        t = G2V[:, :3, 3]
+        
+        t2 = torch.bmm(-R.transpose(1, 2), t[..., None])[..., 0]
+        V2G = torch.zeros((N, 4, 4), device='cuda')
+        V2G[:, :3, :3] = R.transpose(1, 2)
+        V2G[:, :3, 3] = t2
+        V2G[:, 3, 3] = 1.0
+        
+        # transpose view2gaussian to match glm in CUDA code
+        V2G = V2G.transpose(2, 1).contiguous()
+        
+        # precompute results to reduce computation and IO
+        scales = self.get_scaling
+        S_inv_square = 1.0 / (scales ** 2)
+        R = V2G[:, :3, :3].transpose(1, 2)
+        t2 = V2G[:, 3:, :3]
+        
+        C = torch.sum((t2 ** 2) * S_inv_square[:, None, :], dim=2)
+        S_inv_square_R = S_inv_square[:, :, None] * R
+        B = t2 @ S_inv_square_R
+        Sigma = R.transpose(1, 2) @ S_inv_square_R
+        merged = torch.cat([Sigma[:, :, 0], Sigma[:, 1:, 1], Sigma[:, 2:, 2], B.squeeze(), C], dim=1)
+        
+        return merged
 
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:

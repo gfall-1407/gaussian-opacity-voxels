@@ -13,7 +13,7 @@ import os
 import torch
 from random import randint
 from utils.loss_utils import l1_loss, ssim
-from gaussian_renderer import render, network_gui
+from govs_renderer import render
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
@@ -52,20 +52,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):        
-        if network_gui.conn == None:
-            network_gui.try_connect()
-        while network_gui.conn != None:
-            try:
-                net_image_bytes = None
-                custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
-                if custom_cam != None:
-                    net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
-                    net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
-                network_gui.send(net_image_bytes, dataset.source_path)
-                if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
-                    break
-            except Exception as e:
-                network_gui.conn = None
+        # if network_gui.conn == None:
+        #     network_gui.try_connect()
+        # while network_gui.conn != None:
+        #     try:
+        #         net_image_bytes = None
+        #         custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
+        #         if custom_cam != None:
+        #             net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
+        #             net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
+        #         network_gui.send(net_image_bytes, dataset.source_path)
+        #         if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
+        #             break
+        #     except Exception as e:
+        #         network_gui.conn = None
 
         iter_start.record()
 
@@ -98,19 +98,32 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if (iteration - 1) == debug_from:
             pipe.debug = True
         render_pkg = render(viewpoint_cam, gaussians, pipe, background)
-        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        rendering, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         
-        # if ((iteration - 1) % 100 == 0 and iteration <= opt.densify_from_iter) or ((iteration - 1) % 5000 == 0 and iteration > opt.densify_from_iter):
-        #     image_np = image.detach().cpu().numpy()
-        #     image_np = np.transpose(image_np, (1, 2, 0))
-        #     array = np.array(image_np*255.0, dtype=np.byte)  
-        #     image_save = Image.fromarray(array, "RGB")  
-        #     image_save.save("render_output/output_" + str(iteration) + ".png" )
+        image = rendering[:3, :, :]
+
+        if (iteration - 1) % 500 == 0:
+            image_np = image.detach().cpu().numpy()
+            image_np = np.transpose(image_np, (1, 2, 0))
+            array = np.array(image_np*255.0, dtype=np.byte)  
+            image_save = Image.fromarray(array, "RGB")  
+            image_save.save("test/output_" + str(iteration) + ".png" )
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        rgb_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        
+        # depth distortion regularization
+        distortion_map = rendering[8, :, :]
+        # edge aware regularization is not really helpful so we disable it
+        # distortion_map = get_edge_aware_distortion_map(gt_image, distortion_map)
+        distortion_loss = distortion_map.mean()
+
+        lambda_distortion = opt.lambda_distortion if iteration >= opt.distortion_from_iter else 0.0
+
+        loss = rgb_loss + distortion_loss * lambda_distortion
+        
         loss.backward()
 
         iter_end.record()
@@ -242,7 +255,7 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     # Start GUI server, configure and run training
-    network_gui.init(args.ip, args.port)
+    # network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
 
