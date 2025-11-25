@@ -71,7 +71,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if (iteration - 1) == debug_from:
             pipe.debug = True
         render_pkg = render(viewpoint_cam, gaussians, pipe, background)
-        rendering, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["depth"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        rendering, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         
         image = rendering[:3, :, :]
         mD_image = rendering[5:6, :, :]
@@ -85,7 +85,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             image_save.save("test/output_" + str(iteration) + ".png" )
             D_np = D_image.detach().cpu().numpy()[0:1,:,:]
             D_map = D_np.squeeze()
-            median_depth = mD_image.detach().cpu().numpy()[1:2,:,:]
+            median_depth = mD_image.detach().cpu().numpy()[0:1,:,:]
             mD_map = median_depth.squeeze()
             plt.imsave('test/D_' + str(iteration) +'.png', D_map, cmap='plasma')
             plt.imsave('test/mD_' + str(iteration) + '.png', mD_map, cmap='plasma')
