@@ -529,8 +529,8 @@ renderCUDA(
 				float DeltaT = abs(T-test_T)/abs(t - prevt);
 				if (DeltaT > prevDeltaT)
 					C[CHANNELS*2 + 3] = t;
-				C[CHANNELS*2 + 4] += t * abs(t-prevt) * (DeltaT / prevDeltaT);
-				DeltaTweight += (DeltaT / prevDeltaT);
+				C[CHANNELS*2 + 4] += t * DeltaT;
+				DeltaTweight += DeltaT;
 			}
 			
 			prevt = t;
@@ -569,7 +569,7 @@ renderCUDA(
 		}
 
 		// depth and alpha
-		out_color[DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2];
+		out_color[DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2] / C[CHANNELS * 2 + 1];
 		out_color[ALPHA_OFFSET * H * W + pix_id] = C[CHANNELS * 2 + 1];
 		out_color[DISTORTION_OFFSET * H * W + pix_id] = distortion;
 		out_color[T_DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2 + 2];
