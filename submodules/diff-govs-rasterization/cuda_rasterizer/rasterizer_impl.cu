@@ -350,6 +350,10 @@ int CudaRasterizer::Rasterizer::forward(
 		background,
 		out_color), debug)
 
+	// TODO: compute global alpha for geometry
+	
+
+
 	return num_rendered;
 }
 

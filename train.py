@@ -74,21 +74,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         rendering, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         
         image = rendering[:3, :, :]
-        mD_image = rendering[5:6, :, :]
-        D_image = rendering[9:, :, :]
-
-        if iteration % 500 == 0:
-            image_np = image.detach().cpu().numpy()
-            image_np = np.transpose(image_np, (1, 2, 0))
-            array = np.array(image_np*255.0, dtype=np.byte)  
-            image_save = Image.fromarray(array, "RGB")  
-            image_save.save("test/output_" + str(iteration) + ".png" )
-            D_np = D_image.detach().cpu().numpy()[0:1,:,:]
-            D_map = D_np.squeeze()
-            median_depth = mD_image.detach().cpu().numpy()[0:1,:,:]
-            mD_map = median_depth.squeeze()
-            plt.imsave('test/D_' + str(iteration) +'.png', D_map, cmap='plasma')
-            plt.imsave('test/mD_' + str(iteration) + '.png', mD_map, cmap='plasma')
+        D_image = rendering[6:7, :, :]
+        mD_image = rendering[9:10, :, :]
+        DTD_image = rendering[10:11, :, :]
+        DTAD_image = rendering[11:12, :, :]
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -97,11 +86,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
         # depth distortion regularization
         distortion_map = rendering[8, :, :]
-        # edge aware regularization is not really helpful so we disable it
-        # distortion_map = get_edge_aware_distortion_map(gt_image, distortion_map)
         distortion_loss = distortion_map.mean()
         lambda_distortion = opt.lambda_distortion if iteration >= opt.distortion_from_iter else 0.0
         loss = rgb_loss + distortion_loss * lambda_distortion
+        
         loss.backward()
 
         iter_end.record()
@@ -116,10 +104,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
-            if (iteration in saving_iterations):
-                print("\n[ITER {}] Saving Gaussians".format(iteration))
-                scene.save(iteration)
+            # training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            # if (iteration in saving_iterations):
+            #     print("\n[ITER {}] Saving Gaussians".format(iteration))
+            #     scene.save(iteration)
             
             # Densification
             if iteration < opt.densify_until_iter:
@@ -142,6 +130,55 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+            
+            if iteration % 500 == 0:
+                image_np = image.detach().cpu().numpy()
+                image_np = np.transpose(image_np, (1, 2, 0))
+                array = np.array(image_np*255.0, dtype=np.byte)  
+                image_save = Image.fromarray(array, "RGB")  
+                image_save.save("test/output_" + str(iteration) + ".png" )
+                D_np = D_image.detach().cpu().numpy()[0:1,:,:]
+                D_map = D_np.squeeze()
+                median_depth = mD_image.detach().cpu().numpy()[0:1,:,:]
+                mD_map = median_depth.squeeze()
+                dtd_np = DTD_image.detach().cpu().numpy()[0:1,:,:]
+                dtd_map = dtd_np.squeeze()
+                dtad_np = DTAD_image.detach().cpu().numpy()[0:1,:,:]
+                dtad_map = dtad_np.squeeze()
+                plt.imsave('test/D_' + str(iteration) +'.png', D_map, cmap='plasma')
+                plt.imsave('test/mD_' + str(iteration) + '.png', mD_map, cmap='plasma')
+                plt.imsave('test/dtd_' + str(iteration) + '.png', dtd_map, cmap='plasma')
+                plt.imsave('test/dtad_' + str(iteration) + '.png', dtad_map, cmap='plasma')
+                
+if __name__ == "__main__":
+    # Set up command line argument parser
+    parser = ArgumentParser(description="Training script parameters")
+    lp = ModelParams(parser)
+    op = OptimizationParams(parser)
+    pp = PipelineParams(parser)
+    parser.add_argument('--ip', type=str, default="127.0.0.1")
+    parser.add_argument('--port', type=int, default=6009)
+    parser.add_argument('--debug_from', type=int, default=-1)
+    parser.add_argument('--detect_anomaly', action='store_true', default=False)
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
+    parser.add_argument("--start_checkpoint", type=str, default = None)
+    args = parser.parse_args(sys.argv[1:])
+    args.save_iterations.append(args.iterations)
+    
+    print("Optimizing " + args.model_path)
+
+    # Initialize system state (RNG)
+    safe_state(args.quiet)
+
+    # Start GUI server, configure and run training
+    torch.autograd.set_detect_anomaly(args.detect_anomaly)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
+
+    # All done
+    print("\nTraining complete.")
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -201,33 +238,3 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
-
-if __name__ == "__main__":
-    # Set up command line argument parser
-    parser = ArgumentParser(description="Training script parameters")
-    lp = ModelParams(parser)
-    op = OptimizationParams(parser)
-    pp = PipelineParams(parser)
-    parser.add_argument('--ip', type=str, default="127.0.0.1")
-    parser.add_argument('--port', type=int, default=6009)
-    parser.add_argument('--debug_from', type=int, default=-1)
-    parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
-    parser.add_argument("--start_checkpoint", type=str, default = None)
-    args = parser.parse_args(sys.argv[1:])
-    args.save_iterations.append(args.iterations)
-    
-    print("Optimizing " + args.model_path)
-
-    # Initialize system state (RNG)
-    safe_state(args.quiet)
-
-    # Start GUI server, configure and run training
-    torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
-
-    # All done
-    print("\nTraining complete.")

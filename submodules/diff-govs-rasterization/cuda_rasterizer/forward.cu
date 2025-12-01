@@ -405,11 +405,15 @@ renderCUDA(
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	uint32_t max_contributor = -1;
-	float C[CHANNELS*2+2] = { 0 };
+	float C[CHANNELS*2+5] = { 0 };
 
 	float dist1 = {0};
 	float dist2 = {0};
 	float distortion = {0};
+
+	float prevt = 0.;
+	float prevDeltaT = 0.;
+	float DeltaTweight = 0.; 
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -516,7 +520,21 @@ renderCUDA(
 				max_contributor = contributor;
 			}
 			C[CHANNELS * 2 + 1] += alpha * T;
-
+			if(i==0 && j==0 && prevt==0.)
+			{
+				C[CHANNELS*2 + 3] = t;
+			}
+			else
+			{
+				float DeltaT = abs(T-test_T)/abs(t - prevt);
+				if (DeltaT > prevDeltaT)
+					C[CHANNELS*2 + 3] = t;
+				C[CHANNELS*2 + 4] += t * abs(t-prevt) * (DeltaT / prevDeltaT);
+				DeltaTweight += (DeltaT / prevDeltaT);
+			}
+			
+			prevt = t;
+			prevDeltaT = abs(T-test_T)/abs(t - prevt);
 			T = test_T;
 
 			// Keep track of last range entry to update this
@@ -555,6 +573,8 @@ renderCUDA(
 		out_color[ALPHA_OFFSET * H * W + pix_id] = C[CHANNELS * 2 + 1];
 		out_color[DISTORTION_OFFSET * H * W + pix_id] = distortion;
 		out_color[T_DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2 + 2];
+		out_color[DELTA_T_DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2 + 3];
+		out_color[DELTA_T_WEIGHTED_DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2 + 4] / (DeltaTweight + 1e-7);
 	}
 }
 
