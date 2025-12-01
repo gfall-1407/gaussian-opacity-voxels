@@ -520,11 +520,7 @@ renderCUDA(
 				max_contributor = contributor;
 			}
 			C[CHANNELS * 2 + 1] += alpha * T;
-			if(i==0 && j==0 && prevt==0.)
-			{
-				C[CHANNELS*2 + 3] = t;
-			}
-			else
+			if(prevt!=0.)
 			{
 				float DeltaT = abs(T-test_T)/abs(t - prevt);
 				if (DeltaT > prevDeltaT)

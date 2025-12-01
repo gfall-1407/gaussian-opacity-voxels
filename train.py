@@ -145,6 +145,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 dtd_map = dtd_np.squeeze()
                 dtad_np = DTAD_image.detach().cpu().numpy()[0:1,:,:]
                 dtad_map = dtad_np.squeeze()
+                print(mD_map)
+                print(dtad_map)
                 plt.imsave('test/D_' + str(iteration) +'.png', D_map, cmap='plasma')
                 plt.imsave('test/mD_' + str(iteration) + '.png', mD_map, cmap='plasma')
                 plt.imsave('test/dtd_' + str(iteration) + '.png', dtd_map, cmap='plasma')
