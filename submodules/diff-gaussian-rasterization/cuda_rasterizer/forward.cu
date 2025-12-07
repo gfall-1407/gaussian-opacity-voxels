@@ -151,6 +151,121 @@ __device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 r
 	cov3D[5] = Sigma[2][2];
 }
 
+// TODO combined with computeCov3D to avoid redundant computation
+// Forward method for creating a view to gaussian coordinate system transformation matrix
+__device__ void computeView2Gaussian(const glm::vec3 scale, const float3& mean, const glm::vec4 rot, const float* viewmatrix,  float* view2gaussian)
+{
+	// glm matrices use column-major order
+	// Normalize quaternion to get valid rotation
+	glm::vec4 q = rot;// / glm::length(rot);
+	float r = q.x;
+	float x = q.y;
+	float y = q.z;
+	float z = q.w;
+
+	// Compute rotation matrix from quaternion
+	glm::mat3 R = glm::mat3(
+		1.f - 2.f * (y * y + z * z), 2.f * (x * y - r * z), 2.f * (x * z + r * y),
+		2.f * (x * y + r * z), 1.f - 2.f * (x * x + z * z), 2.f * (y * z - r * x),
+		2.f * (x * z - r * y), 2.f * (y * z + r * x), 1.f - 2.f * (x * x + y * y)
+	);
+
+	// Gaussian to world transform
+	glm::mat4 G2W = glm::mat4(
+		R[0][0], R[1][0], R[2][0], 0.0f,
+		R[0][1], R[1][1], R[2][1], 0.0f,
+		R[0][2], R[1][2], R[2][2], 0.0f,
+		mean.x, mean.y, mean.z, 1.0f
+	);
+
+	// could be simplied by using pointer
+	// viewmatrix is the world to view transformation matrix
+	glm::mat4 W2V = glm::mat4(
+		viewmatrix[0], viewmatrix[1], viewmatrix[2], viewmatrix[3],
+		viewmatrix[4], viewmatrix[5], viewmatrix[6], viewmatrix[7],
+		viewmatrix[8], viewmatrix[9], viewmatrix[10], viewmatrix[11],
+		viewmatrix[12], viewmatrix[13], viewmatrix[14], viewmatrix[15]
+	);
+
+	// Gaussian to view transform
+	glm::mat4 G2V = W2V * G2W;
+
+	// inverse of Gaussian to view transform
+	// glm::mat4 V2G_inverse = glm::inverse(G2V);
+	// R = G2V[:, :3, :3]
+	// t = G2V[:, :3, 3]
+	
+	// t2 = torch.bmm(-R.transpose(1, 2), t[..., None])[..., 0]
+	// V2G = torch.zeros((N, 4, 4), device='cuda')
+	// V2G[:, :3, :3] = R.transpose(1, 2)
+	// V2G[:, :3, 3] = t2
+	// V2G[:, 3, 3] = 1.0
+	glm::mat3 R_transpose = glm::mat3(
+		G2V[0][0], G2V[1][0], G2V[2][0],
+		G2V[0][1], G2V[1][1], G2V[2][1],
+		G2V[0][2], G2V[1][2], G2V[2][2]
+	);
+
+	glm::vec3 t = glm::vec3(G2V[3][0], G2V[3][1], G2V[3][2]);
+	glm::vec3 t2 = -R_transpose * t;
+
+	// view2gaussian[0] = R_transpose[0][0];
+	// view2gaussian[1] = R_transpose[0][1];
+	// view2gaussian[2] = R_transpose[0][2];
+	// view2gaussian[3] = 0.0f;
+	// view2gaussian[4] = R_transpose[1][0];
+	// view2gaussian[5] = R_transpose[1][1];
+	// view2gaussian[6] = R_transpose[1][2];
+	// view2gaussian[7] = 0.0f;
+	// view2gaussian[8] = R_transpose[2][0];
+	// view2gaussian[9] = R_transpose[2][1];
+	// view2gaussian[10] = R_transpose[2][2];
+	// view2gaussian[11] = 0.0f;
+	// view2gaussian[12] = t2.x;
+	// view2gaussian[13] = t2.y;
+	// view2gaussian[14] = t2.z;
+	// view2gaussian[15] = 1.0f;
+
+
+    // precompute the value here to avoid repeated computations also reduce IO
+	// v is the viewdirection and v^T is the transpose of v
+	// t = position of the camera in the gaussian coordinate system
+	// A = v^T @ R^T @ S^-1 @ S^-1 @ R @ v
+	// B = t^T @ S^-1 @ S^-1 @ R @ v
+	// C = t^T @ S^-1 @ S^-1 @ t
+	// For the given caemra, t is fix and v depends on the pixel
+	// therefore we can precompute A, B, C and use them in the forward pass
+	// For A, we can precompute R^T @ S^-1 @ S^-1 @ R, which is a symmetric matrix and only store the upper triangle in 6 values
+	// For B, we can precompute S^-1 @ S^-1 @ R @ v, which is a vector and store it in 3 values
+	// and C is fixed, so we only need to store 1 value
+	// Therefore, we only need to store 10 values in the view2gaussian matrix
+	// S^-1 @ S^-1 is shared in A, B, C
+	double3 S_inv_square = {1.0f / ((double)scale.x * scale.x + 1e-7), 1.0f / ((double)scale.y * scale.y + 1e-7), 1.0f / ((double)scale.z * scale.z + 1e-7)};
+	double C = t2.x * t2.x * S_inv_square.x + t2.y * t2.y * S_inv_square.y + t2.z * t2.z * S_inv_square.z;
+	glm::mat3 S_inv_square_R = glm::mat3(
+		S_inv_square.x * R_transpose[0][0], S_inv_square.y * R_transpose[0][1], S_inv_square.z * R_transpose[0][2],
+		S_inv_square.x * R_transpose[1][0], S_inv_square.y * R_transpose[1][1], S_inv_square.z * R_transpose[1][2],
+		S_inv_square.x * R_transpose[2][0], S_inv_square.y * R_transpose[2][1], S_inv_square.z * R_transpose[2][2]
+	); 
+
+	glm::vec3 B = t2 * S_inv_square_R;
+
+	glm::mat3 Sigma = glm::transpose(R_transpose) * S_inv_square_R;
+
+	// write to view2gaussian
+	view2gaussian[0] = Sigma[0][0];
+	view2gaussian[1] = Sigma[0][1];
+	view2gaussian[2] = Sigma[0][2];
+	view2gaussian[3] = Sigma[1][1];
+	view2gaussian[4] = Sigma[1][2];
+	view2gaussian[5] = Sigma[2][2];
+	view2gaussian[6] = B.x;
+	view2gaussian[7] = B.y;
+	view2gaussian[8] = B.z;
+	view2gaussian[9] = C;	
+	
+}
+
 // Perform initial steps for each Gaussian prior to rasterization.
 template<int C>
 __global__ void preprocessCUDA(int P, int D, int M,
@@ -174,6 +289,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float* depths,
 	float* cov3Ds,
 	float* rgb,
+	float* view2gaussians,
 	float4* conic_opacity,
 	const dim3 grid,
 	uint32_t* tiles_touched,
@@ -198,6 +314,10 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float4 p_hom = transformPoint4x4(p_orig, projmatrix);
 	float p_w = 1.0f / (p_hom.w + 0.0000001f);
 	float3 p_proj = { p_hom.x * p_w, p_hom.y * p_w, p_hom.z * p_w };
+
+	// access scale and rotation once to reduce IO
+	const glm::vec3 scale = scales[idx];
+	const glm::vec4 rot = rotations[idx];
 
 	// If 3D covariance matrix is precomputed, use it, otherwise compute
 	// from scaling and rotation parameters. 
@@ -253,6 +373,19 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	// Inverse 2D covariance and opacity neatly pack into one float4
 	conic_opacity[idx] = { conic.x, conic.y, conic.z, opacities[idx] };
 	tiles_touched[idx] = (rect_max.y - rect_min.y) * (rect_max.x - rect_min.x);
+
+	// view to gaussian coordinate system
+	// If colors have been precomputed, use them, otherwise convert
+	// spherical harmonics coefficients to RGB color.
+	// const float* view2gaussian;
+	// if (view2gaussian_precomp == nullptr)
+	// {
+		// printf("view2gaussian_precomp is nullptr\n");
+	computeView2Gaussian(scale, p_orig, rot, viewmatrix, view2gaussians + idx * 10);
+		
+	// } else {
+	// 	view2gaussian = view2gaussian_precomp + idx * 16;
+	// }
 }
 
 // Main rasterization method. Collaboratively works on one tile per
@@ -264,8 +397,10 @@ renderCUDA(
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
+	const float focal_x, const float focal_y,
 	const float2* __restrict__ points_xy_image,
 	const float* __restrict__ features,
+	const float* __restrict__ view2gaussians,
 	const float4* __restrict__ conic_opacity,
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
@@ -279,12 +414,15 @@ renderCUDA(
 	uint2 pix_max = { min(pix_min.x + BLOCK_X, W), min(pix_min.y + BLOCK_Y , H) };
 	uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	uint32_t pix_id = W * pix.y + pix.x;
-	float2 pixf = { (float)pix.x, (float)pix.y };
+	float2 pixf = { (float)pix.x + 0.5f, (float)pix.y + 0.5f };
 
 	// Check if this thread is associated with a valid pixel or outside.
 	bool inside = pix.x < W&& pix.y < H;
 	// Done threads can help with fetching, but don't rasterize
 	bool done = !inside;
+
+	// create the ray
+	float2 ray = { (pixf.x - W/2.) / focal_x, (pixf.y - H/2.) / focal_y };
 
 	// Load start/end range of IDs to process in bit sorted list.
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
@@ -293,14 +431,16 @@ renderCUDA(
 
 	// Allocate storage for batches of collectively fetched data.
 	__shared__ int collected_id[BLOCK_SIZE];
-	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
+	__shared__ float collected_view2gaussian[BLOCK_SIZE * 10]; 
 
 	// Initialize helper variables
 	float T = 1.0f;
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
-	float C[CHANNELS] = { 0 };
+	uint32_t max_contributor = -1;
+	float delta_T = 0.0f;
+	float C[CHANNELS*2 + 4] = { 0 };
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -316,8 +456,9 @@ renderCUDA(
 		{
 			int coll_id = point_list[range.x + progress];
 			collected_id[block.thread_rank()] = coll_id;
-			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
+			for (int ii = 0; ii < 10; ii++)
+				collected_view2gaussian[10 * block.thread_rank() + ii] = view2gaussians[coll_id * 10 + ii];
 		}
 		block.sync();
 
@@ -327,14 +468,33 @@ renderCUDA(
 			// Keep track of current position in range
 			contributor++;
 
-			// Resample using conic matrix (cf. "Surface 
-			// Splatting" by Zwicker et al., 2001)
-			float2 xy = collected_xy[j];
-			float2 d = { xy.x - pixf.x, xy.y - pixf.y };
 			float4 con_o = collected_conic_opacity[j];
-			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
-			if (power > 0.0f)
+			float* view2gaussian_j = collected_view2gaussian + j * 10;
+			float3 ray_point = { ray.x , ray.y, 1.0 };
+			const float normal[3] = { 
+				view2gaussian_j[0] * ray_point.x + view2gaussian_j[1] * ray_point.y + view2gaussian_j[2], 
+				view2gaussian_j[1] * ray_point.x + view2gaussian_j[3] * ray_point.y + view2gaussian_j[4],
+				view2gaussian_j[2] * ray_point.x + view2gaussian_j[4] * ray_point.y + view2gaussian_j[5]
+			};
+
+			// use AA, BB, CC so that the name is unique
+			double AA = ray.x * normal[0] + ray.y * normal[1] + normal[2];
+			double BB = 2 * (view2gaussian_j[6] * ray_point.x + view2gaussian_j[7] * ray_point.y + view2gaussian_j[8]);
+			float CC = view2gaussian_j[9];
+			
+			// t is the depth of the gaussian
+			float t = -BB/(2*AA);
+			// depth must be positive otherwise it is not valid and we skip it
+			if (t <= NEAR_PLANE)
 				continue;
+
+			// the scale of the gaussian is 1.f / sqrt(AA)
+			double min_value = -(BB/AA) * (BB/4.) + CC;
+
+			float power = -0.5f * min_value;
+			if (power > 0.0f){
+				power = 0.0f;
+			}
 
 			// Eq. (2) from 3D Gaussian splatting paper.
 			// Obtain alpha by multiplying with Gaussian opacity
@@ -350,9 +510,38 @@ renderCUDA(
 				continue;
 			}
 
+			// // NDC mapping is taken from 2DGS paper, please check here https://arxiv.org/pdf/2403.17888.pdf
+			// const float max_t = t;
+			// const float mapped_max_t = (FAR_PLANE * max_t - FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * max_t);
+			// normalize normal
+			float length = sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2] + 1e-7);
+			const float normal_normalized[3] = { -normal[0] / length, -normal[1] / length, -normal[2] / length };
+			// // distortion loss is taken from 2DGS paper, please check https://arxiv.org/pdf/2403.17888.pdf
+			// float A = 1-T;
+			// float error = mapped_max_t * mapped_max_t * A + dist2 - 2 * mapped_max_t * dist1;
+			// distortion += error * alpha * T;
+			// dist1 += mapped_max_t * alpha * T;
+			// dist2 += mapped_max_t * mapped_max_t * alpha * T;
+
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+
+			// normal
+			for (int ch = 0; ch < CHANNELS; ch++)
+				C[CHANNELS + ch] += normal_normalized[ch] * alpha * T;
+
+			C[CHANNELS * 2] += alpha * T;
+			// depth and alpha
+			if (T > 0.5){
+				C[CHANNELS * 2 + 1] = t;
+				max_contributor = contributor;
+			}
+			C[CHANNELS * 2 + 2] += t * alpha * T;
+			if(test_T > delta_T || delta_T == 0.0f){
+				C[CHANNELS * 2 + 3] = t;
+				delta_T = test_T;
+			}
 
 			T = test_T;
 
@@ -368,8 +557,20 @@ renderCUDA(
 	{
 		final_T[pix_id] = T;
 		n_contrib[pix_id] = last_contributor;
+		n_contrib[pix_id + H * W] = max_contributor;
+
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
+
+		// normal
+		for (int ch = 0; ch < CHANNELS; ch++){
+			out_color[(CHANNELS + ch) * H * W + pix_id] = C[CHANNELS+ch];
+		}
+
+		// depth and alpha
+		out_color[T_DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2 + 1];
+		out_color[MEDIAN_DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2 + 2] / C[CHANNELS * 2];
+		out_color[DELTA_T_DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2 + 3];
 	}
 }
 
@@ -378,8 +579,10 @@ void FORWARD::render(
 	const uint2* ranges,
 	const uint32_t* point_list,
 	int W, int H,
+	const float focal_x, const float focal_y,
 	const float2* means2D,
 	const float* colors,
+	const float* view2gaussians,
 	const float4* conic_opacity,
 	float* final_T,
 	uint32_t* n_contrib,
@@ -390,8 +593,10 @@ void FORWARD::render(
 		ranges,
 		point_list,
 		W, H,
+		focal_x, focal_y,
 		means2D,
 		colors,
+		view2gaussians,
 		conic_opacity,
 		final_T,
 		n_contrib,
@@ -420,6 +625,7 @@ void FORWARD::preprocess(int P, int D, int M,
 	float* depths,
 	float* cov3Ds,
 	float* rgb,
+	float* view2gaussians,
 	float4* conic_opacity,
 	const dim3 grid,
 	uint32_t* tiles_touched,
@@ -447,6 +653,7 @@ void FORWARD::preprocess(int P, int D, int M,
 		depths,
 		cov3Ds,
 		rgb,
+		view2gaussians,
 		conic_opacity,
 		grid,
 		tiles_touched,
