@@ -88,6 +88,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         rendering, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         
+        # 插入这行调试代码
+        print("DEBUG: rendering shape is:", rendering.shape)
+
         image = rendering[:3, :, :]
         TD_image = rendering[6:7, :, :]
         mD_image = rendering[7:8, :, :]
