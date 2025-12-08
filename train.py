@@ -228,9 +228,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 plt.imsave('test/dtd_' + str(iteration) + '.png', dtd_map, cmap='plasma')
                 save_depth_2_point_cloud(TD_map, viewpoint_cam.FoVx, viewpoint_cam.FoVy, 'test/TD_' + str(iteration) +'.ply')
                 save_depth_2_point_cloud(dtd_map, viewpoint_cam.FoVx, viewpoint_cam.FoVy, 'test/dtd_' + str(iteration) +'.ply')
-                count = np.sum(dtd_np > TD_map)
-                print(count)
-
+                
 def prepare_output_and_logger(args):    
     if not args.model_path:
         if os.getenv('OAR_JOB_ID'):

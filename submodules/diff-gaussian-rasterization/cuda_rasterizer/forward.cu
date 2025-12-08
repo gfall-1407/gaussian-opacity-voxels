@@ -543,10 +543,6 @@ renderCUDA(
 				delta_T = T * alpha;
 			}
 
-			if(C[CHANNELS * 2 + 3] > C[CHANNELS * 2 + 2]){
-				printf("dTD:%f,  TD%f\n.", C[CHANNELS * 2 + 3], C[CHANNELS * 2 + 2]);
-			}
-
 			T = test_T;
 
 			// Keep track of last range entry to update this
