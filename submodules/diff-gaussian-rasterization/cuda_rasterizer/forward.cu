@@ -439,8 +439,13 @@ renderCUDA(
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	uint32_t max_contributor = -1;
-	float delta_T = 0.0f;
-	float C[CHANNELS*2 + 4] = { 0 };
+	float C[CHANNELS*2 + 3] = { 0 };
+
+	const int windows_step = 2;
+	const int windows_size = windows_step * 2 + 1;
+	float windows_depth[windows_size] = {0};
+	float windows_weight[windows_size] = {0};
+	int windows_index = 0;
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -533,16 +538,26 @@ renderCUDA(
 
 			C[CHANNELS * 2] += alpha * T;
 			// depth and alpha
+			int step_int = windows_step;
 			if (T > 0.5){
 				C[CHANNELS * 2 + 1] = t;
 				max_contributor = contributor;
+				for (int k = 0; k < step_int; k++) {
+                    windows_depth[k] = windows_depth[k + 1];
+                    windows_weight[k] = windows_weight[k + 1];
+                }
+				windows_depth[step_int] = t;
+                windows_weight[step_int] = T * alpha;
+				windows_index = step_int + 1;
 			}
+			else if (windows_index < windows_size) {
+                int win_idx = windows_index;
+                windows_depth[win_idx] = t;
+                windows_weight[win_idx] = T * alpha;
+                windows_index++;
+            }
 			C[CHANNELS * 2 + 2] += t * alpha * T;
-			if((T * alpha > delta_T) && T > 0.5){
-				C[CHANNELS * 2 + 3] = t;
-				delta_T = T * alpha;
-			}
-
+			
 			T = test_T;
 
 			// Keep track of last range entry to update this
@@ -570,7 +585,15 @@ renderCUDA(
 		// depth and alpha
 		out_color[T_DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2 + 1];
 		out_color[MEDIAN_DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2 + 2] / C[CHANNELS * 2];
-		out_color[DELTA_T_DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2 + 3];
+		float dtd = 0;
+		float dtd_weight_sum = 0;
+		for(int i = 0; i < windows_size; i++){
+			windows_weight[i] *= exp(-(windows_depth[i] - windows_depth[windows_step]) * 
+				(windows_depth[i] - windows_depth[windows_step]) / (2 * 0.1 * 0.1));
+			dtd += windows_depth[i] * windows_weight[i];
+			dtd_weight_sum += windows_weight[i];
+		}
+		out_color[DELTA_T_DEPTH_OFFSET * H * W + pix_id] = dtd / (dtd_weight_sum + 1e-7);
 	}
 }
 
