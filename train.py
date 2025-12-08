@@ -33,6 +33,75 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 
+
+import numpy as np
+import os
+
+def save_depth_2_point_cloud(depth, FoVx, FoVy, filename):
+    """
+    image: (3, H, W) numpy array, 范围 [0, 1] 或 [0, 255]
+    depth: (H, W) numpy array
+    viewpoint_cam: 包含相机参数的对象
+    filename: 保存路径 (.ply)
+    """
+    # 1. 获取图像尺寸
+    H, W = depth.shape
+    
+    # 2. 计算相机内参 (焦距)
+    # Gaussian Splatting 代码中通常存储的是 FoVx 和 FoVy
+    fx = W / (2 * np.tan(FoVx / 2))
+    fy = H / (2 * np.tan(FoVy / 2))
+    cx = W / 2.0
+    cy = H / 2.0
+
+    # 3. 创建像素坐标网格
+    u, v = np.meshgrid(np.arange(W), np.arange(H))
+    u = u.flatten()
+    v = v.flatten()
+    z = depth.flatten()
+
+    # 4. 过滤掉深度无效的点 (比如深度极小或极大)
+    valid_mask = (z > 0.00) # 根据场景调整阈值
+    u = u[valid_mask]
+    v = v[valid_mask]
+    z = z[valid_mask]
+
+    # 5. 反投影：从 2D 像素 -> 3D 相机坐标系
+    x = (u - cx) * z / fx
+    y = (v - cy) * z / fy
+    # 注意：Gaussian Splatting 的相机坐标系通常是 Y向下，Z向前
+    # 如果生成的点云上下颠倒，可以尝试 y = -y 
+    
+    # 堆叠 xyz
+    xyz = np.stack([x, y, z], axis=1)
+
+    # 6. 转世界坐标系 (可选)
+    # 如果你想看它在世界中的位置，需要乘以相机外参的逆 (c2w)
+    # viewpoint_cam.world_view_transform 通常是 w2c
+    # c2w = torch.inverse(viewpoint_cam.world_view_transform).cpu().numpy()
+    # R = c2w[:3, :3]
+    # t = c2w[:3, 3]
+    # xyz = xyz @ R.T + t
+
+    # 8. 写入 PLY 文件头
+    num_points = xyz.shape[0]
+    header = f"""ply
+        format ascii 1.0
+        element vertex {num_points}
+        property float x
+        property float y
+        property float z
+        end_header
+    """
+    
+    # 9. 保存数据
+    with open(filename, 'w') as f:
+        f.write(header)
+        for i in range(num_points):
+            f.write(f"{xyz[i,0]:.4f} {xyz[i,1]:.4f} {xyz[i,2]:.4f}\n")
+            
+    print(f"Point cloud saved to {filename}")
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -87,9 +156,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             pipe.debug = True
         render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         rendering, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        
-        # 插入这行调试代码
-        print("DEBUG: rendering shape is:", rendering.shape)
 
         image = rendering[:3, :, :]
         TD_image = rendering[6:7, :, :]
@@ -100,6 +166,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+
+        # opacities = gaussians.get_opacity[visibility_filter]
+        # loss_alpha = (opacities * (1 - opacities)).mean()
+
+        # loss += loss_alpha * 0.05
         loss.backward()
 
         iter_end.record()
@@ -114,10 +185,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
-            if (iteration in saving_iterations):
-                print("\n[ITER {}] Saving Gaussians".format(iteration))
-                scene.save(iteration)
+            # training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            # if (iteration in saving_iterations):
+            #     print("\n[ITER {}] Saving Gaussians".format(iteration))
+            #     scene.save(iteration)
 
             # Densification
             if iteration < opt.densify_until_iter:
@@ -154,8 +225,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 dtd_np = DTD_image.detach().cpu().numpy()[0:1,:,:]
                 dtd_map = dtd_np.squeeze()
                 plt.imsave('test/TD_' + str(iteration) +'.png', TD_map, cmap='plasma')
-                plt.imsave('test/mD_' + str(iteration) + '.png', mD_map, cmap='plasma')
                 plt.imsave('test/dtd_' + str(iteration) + '.png', dtd_map, cmap='plasma')
+                save_depth_2_point_cloud(TD_map, viewpoint_cam.FoVx, viewpoint_cam.FoVy, 'test/TD_' + str(iteration) +'.ply')
+                save_depth_2_point_cloud(dtd_map, viewpoint_cam.FoVx, viewpoint_cam.FoVy, 'test/dtd_' + str(iteration) +'.ply')
+                count = np.sum(dtd_np > TD_map)
+                print(count)
 
 def prepare_output_and_logger(args):    
     if not args.model_path:

@@ -538,9 +538,9 @@ renderCUDA(
 				max_contributor = contributor;
 			}
 			C[CHANNELS * 2 + 2] += t * alpha * T;
-			if(test_T > delta_T || delta_T == 0.0f){
+			if((T * T * T * alpha > delta_T || delta_T == 0.0f)){
 				C[CHANNELS * 2 + 3] = t;
-				delta_T = test_T;
+				delta_T = T * T * T * alpha;
 			}
 
 			T = test_T;
