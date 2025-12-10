@@ -190,10 +190,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
         lambda_distortion = opt.lambda_distortion 
         lambda_depth_normal = opt.lambda_depth_normal
+
+        surface_weight = rendering[10, :, :]
+        loss_hard = (1.0 - surface_weight).mean()
+        lambda_hard_surface = opt.lambda_hard_surface
        
         # loss += loss_alpha * 0.05
         # Final loss
-        loss = rgb_loss + depth_normal_loss * lambda_depth_normal + distortion_loss * lambda_distortion
+        loss = rgb_loss + depth_normal_loss * lambda_depth_normal + distortion_loss * lambda_distortion + loss_hard * lambda_hard_surface
         loss.backward()
 
         iter_end.record()
@@ -243,8 +247,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 image_save.save("test/output_" + str(iteration) + ".png" )
                 TD_np = TD_image.detach().cpu().numpy()[0:1,:,:]
                 TD_map = TD_np.squeeze()
-                median_depth = mD_image.detach().cpu().numpy()[0:1,:,:]
-                mD_map = median_depth.squeeze()
                 plt.imsave('test/TD_' + str(iteration) +'.png', TD_map, cmap='plasma')
                 save_depth_2_point_cloud(TD_map, viewpoint_cam.FoVx, viewpoint_cam.FoVy, 'test/TD_' + str(iteration) +'.ply')
                 

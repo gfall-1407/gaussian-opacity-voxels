@@ -83,6 +83,7 @@ class OptimizationParams(ParamGroup):
         self.lambda_dssim = 0.2
         self.lambda_distortion = 100
         self.lambda_depth_normal = 0.05
+        self.lambda_hard_surface = 0.05
         self.distortion_from_iter = 15000
         self.depth_normal_from_iter = 15000
         self.densification_interval = 100
