@@ -439,13 +439,15 @@ renderCUDA(
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	uint32_t max_contributor = -1;
-	float C[CHANNELS*2 + 3] = { 0 };
+	float C[CHANNELS*2 + 2] = { 0 };
 
-	const int windows_step = 2;
-	const int windows_size = windows_step * 2 + 1;
-	float windows_depth[windows_size] = {0};
-	float windows_weight[windows_size] = {0};
-	int windows_index = 0;
+	float surface_weight = 0;
+
+	float dist1 = {0};
+	float dist2 = {0};
+	float distortion = {0};
+	float distortion_T = {0};
+	int distortion_contributor = 0;
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -515,18 +517,23 @@ renderCUDA(
 				continue;
 			}
 
-			// // NDC mapping is taken from 2DGS paper, please check here https://arxiv.org/pdf/2403.17888.pdf
-			// const float max_t = t;
-			// const float mapped_max_t = (FAR_PLANE * max_t - FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * max_t);
+			// NDC mapping is taken from 2DGS paper, please check here https://arxiv.org/pdf/2403.17888.pdf
+			const float max_t = t;
+			const float mapped_max_t = (FAR_PLANE * max_t - FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * max_t);
 			// normalize normal
 			float length = sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2] + 1e-7);
 			const float normal_normalized[3] = { -normal[0] / length, -normal[1] / length, -normal[2] / length };
-			// // distortion loss is taken from 2DGS paper, please check https://arxiv.org/pdf/2403.17888.pdf
-			// float A = 1-T;
-			// float error = mapped_max_t * mapped_max_t * A + dist2 - 2 * mapped_max_t * dist1;
-			// distortion += error * alpha * T;
-			// dist1 += mapped_max_t * alpha * T;
-			// dist2 += mapped_max_t * mapped_max_t * alpha * T;
+			// distortion loss is taken from 2DGS paper, please check https://arxiv.org/pdf/2403.17888.pdf
+			float A = 1-T;
+			float error = mapped_max_t * mapped_max_t * A + dist2 - 2 * mapped_max_t * dist1;
+			if (T > 0.5)
+			{
+				distortion += error * alpha * T;
+				dist1 += mapped_max_t * alpha * T;
+				dist2 += mapped_max_t * mapped_max_t * alpha * T;
+				distortion_T = test_T;
+				distortion_contributor = contributor;
+			}
 
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++)
@@ -538,24 +545,11 @@ renderCUDA(
 
 			C[CHANNELS * 2] += alpha * T;
 			// depth and alpha
-			int step_int = windows_step;
 			if (T > 0.5){
 				C[CHANNELS * 2 + 1] = t;
+				surface_weight = alpha * T;
 				max_contributor = contributor;
-				for (int k = 0; k < step_int; k++) {
-                    windows_depth[k] = windows_depth[k + 1];
-                    windows_weight[k] = windows_weight[k + 1];
-                }
-				windows_depth[step_int] = t;
-                windows_weight[step_int] = T * alpha;
-				windows_index = step_int + 1;
 			}
-			else if (windows_index < windows_size) {
-                int win_idx = windows_index;
-                windows_depth[win_idx] = t;
-                windows_weight[win_idx] = T * alpha;
-                windows_index++;
-            }
 			C[CHANNELS * 2 + 2] += t * alpha * T;
 			
 			T = test_T;
@@ -570,7 +564,17 @@ renderCUDA(
 	// rendering data to the frame and auxiliary buffers.
 	if (inside)
 	{
+		// add the background 
+		const float distortion_before_normalized = distortion;
+		// normalize
+		distortion /= (1 - distortion_T) * (1 - distortion_T) + 1e-7;
+
 		final_T[pix_id] = T;
+		final_T[pix_id + H * W] = dist1;
+		final_T[pix_id + 2 * H * W] = dist2;
+		final_T[pix_id + 3 * H * W] = distortion_before_normalized;
+		final_T[pix_id + 4 * H * W] = distortion_T;
+		
 		n_contrib[pix_id] = last_contributor;
 		n_contrib[pix_id + H * W] = max_contributor;
 
@@ -583,17 +587,11 @@ renderCUDA(
 		}
 
 		// depth and alpha
+		out_color[ALPHA_OFFSET * H * W + pix_id] = C[CHANNELS * 2];
 		out_color[T_DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2 + 1];
 		out_color[MEDIAN_DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2 + 2] / C[CHANNELS * 2];
-		float dtd = 0;
-		float dtd_weight_sum = 0;
-		for(int i = 0; i < windows_size; i++){
-			windows_weight[i] *= exp(-(windows_depth[i] - windows_depth[windows_step]) * 
-				(windows_depth[i] - windows_depth[windows_step]) / (2 * 0.1 * 0.1));
-			dtd += windows_depth[i] * windows_weight[i];
-			dtd_weight_sum += windows_weight[i];
-		}
-		out_color[DELTA_T_DEPTH_OFFSET * H * W + pix_id] = dtd / (dtd_weight_sum + 1e-7);
+		out_color[DISTORTION_OFFSET * H * W + pix_id] = distortion;
+		out_color[SURFACE_WEIGHT_OFFSET * H * W + pix_id] = surface_weight;
 	}
 }
 

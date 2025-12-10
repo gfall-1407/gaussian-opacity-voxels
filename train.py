@@ -28,11 +28,12 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
+from utils.depth_utils import depth_to_normal
+
 from PIL import Image
 import numpy as np
 
 import matplotlib.pyplot as plt
-
 
 import numpy as np
 import os
@@ -158,19 +159,41 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         rendering, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         image = rendering[:3, :, :]
-        TD_image = rendering[6:7, :, :]
-        mD_image = rendering[7:8, :, :]
-        DTD_image = rendering[8:, :, :]
+        TD_image = rendering[7:8, :, :]
+        mD_image = rendering[8:9, :, :]
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        rgb_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
 
-        # opacities = gaussians.get_opacity[visibility_filter]
-        # loss_alpha = (opacities * (1 - opacities)).mean()
+        # depth distortion regularization
+        distortion_map = rendering[8, :, :]
+        # edge aware regularization is not really helpful so we disable it
+        # distortion_map = get_edge_aware_distortion_map(gt_image, distortion_map)
+        distortion_loss = distortion_map.mean()
+        
+        # depth normal consistency
+        depth = rendering[6, :, :]
+        depth_normal, _ = depth_to_normal(viewpoint_cam, depth[None, ...])
+        depth_normal = depth_normal.permute(2, 0, 1)
 
+        render_normal = rendering[3:6, :, :]
+        render_normal = torch.nn.functional.normalize(render_normal, p=2, dim=0)
+        
+        c2w = (viewpoint_cam.world_view_transform.T).inverse()
+        normal2 = c2w[:3, :3] @ render_normal.reshape(3, -1)
+        render_normal_world = normal2.reshape(3, *render_normal.shape[1:])
+        
+        normal_error = 1 - (render_normal_world * depth_normal).sum(dim=0)
+        depth_normal_loss = normal_error.mean()
+        
+        lambda_distortion = opt.lambda_distortion 
+        lambda_depth_normal = opt.lambda_depth_normal
+       
         # loss += loss_alpha * 0.05
+        # Final loss
+        loss = rgb_loss + depth_normal_loss * lambda_depth_normal + distortion_loss * lambda_distortion
         loss.backward()
 
         iter_end.record()
@@ -222,12 +245,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 TD_map = TD_np.squeeze()
                 median_depth = mD_image.detach().cpu().numpy()[0:1,:,:]
                 mD_map = median_depth.squeeze()
-                dtd_np = DTD_image.detach().cpu().numpy()[0:1,:,:]
-                dtd_map = dtd_np.squeeze()
                 plt.imsave('test/TD_' + str(iteration) +'.png', TD_map, cmap='plasma')
-                plt.imsave('test/dtd_' + str(iteration) + '.png', dtd_map, cmap='plasma')
                 save_depth_2_point_cloud(TD_map, viewpoint_cam.FoVx, viewpoint_cam.FoVy, 'test/TD_' + str(iteration) +'.ply')
-                save_depth_2_point_cloud(dtd_map, viewpoint_cam.FoVx, viewpoint_cam.FoVy, 'test/dtd_' + str(iteration) +'.ply')
                 
 def prepare_output_and_logger(args):    
     if not args.model_path:

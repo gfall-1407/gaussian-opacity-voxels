@@ -624,7 +624,7 @@ renderCUDA(
 	const uint2 pix_max = { min(pix_min.x + BLOCK_X, W), min(pix_min.y + BLOCK_Y , H) };
 	const uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	const uint32_t pix_id = W * pix.y + pix.x;
-	const float2 pixf = { (float)pix.x + 0.5f, (float)pix.y + 0.5f};
+	float2 pixf = { (float)pix.x + 0.5f, (float)pix.y + 0.5f };
 
 	const bool inside = pix.x < W&& pix.y < H;
 	const uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
@@ -642,36 +642,59 @@ renderCUDA(
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	__shared__ float collected_colors[C * BLOCK_SIZE];
 	__shared__ float collected_view2gaussian[BLOCK_SIZE * 10];
-
+	
 	// In the forward, we stored the final value for T, the
 	// product of all (1 - alpha) factors. 
 	const float T_final = inside ? final_Ts[pix_id] : 0;
 	float T = T_final;
+	const float distortion_T_final = inside ? final_Ts[pix_id + 4 * H * W] : 0;
+	const float final_D = inside ? final_Ts[pix_id + H * W] : 0;
+	const float final_D2 = inside ? final_Ts[pix_id + 2 * H * W] : 0;
+	const float final_A = 1 - T_final;
+	const float final_A_distortion = 1 - distortion_T_final;
+	const float dL_dreg = inside ? dL_dpixels[DISTORTION_OFFSET * H * W + pix_id] : 0;
+	// gradient from normalization
+	// distortion /= (1 - T) * (1 - T) + 1e-7;
+	const float distortion_before_normalized = inside ? final_Ts[pix_id + 3 * H * W] : 0;
+	
+	const float ddist_done_minus_T = -2.0f / ((1.f - distortion_T_final) * (1.f - distortion_T_final) * (1.f - distortion_T_final) + 1e-7);
+	float dL_done_minus_T = distortion_before_normalized * ddist_done_minus_T * dL_dreg;
+	const float dL_dT_final = -1.f * dL_done_minus_T;
 
+	float last_dL_dT = 0;
+	
 	// We start from the back. The ID of the last contributing
 	// Gaussian is known from each pixel from the forward.
 	uint32_t contributor = toDo;
 	const int last_contributor = inside ? n_contrib[pix_id] : 0;
 	const int max_contributor = inside ? n_contrib[pix_id + H * W] : 0;
 	float accum_rec[C] = { 0 };
-	float dL_dpixel[C];
-	float dL_dnormal2D[3];
+	float dL_dpixel[C]; // RGB
+	float dL_dnormal2D[3]; // Normal
+	float dL_dmax_depth = 0;
 	if (inside){
 		for (int i = 0; i < C; i++)
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
 		for (int i = 0; i < 3; i++)
 			dL_dnormal2D[i] = dL_dpixels[(C+i) * H * W + pix_id];
+		dL_dmax_depth = dL_dpixels[T_DEPTH_OFFSET * H * W + pix_id];
 	}
-
+	
 	float last_alpha = 0;
 	float last_color[C] = { 0 };
 	float last_normal[3] = { 0 };
+	float accum_depth_rec = 0;
+	float accum_alpha_rec = 0;
 	float accum_normal_rec[3] = {0};
 
 	// Gradient of pixel coordinate w.r.t. normalized 
 	// screen-space viewport corrdinates (-1 to 1)
 	const float ddelx_dx = 0.5 * W;
 	const float ddely_dy = 0.5 * H;
+
+	// Gradient of surface weight
+	const float dL_dsw = dL_dpixels[SURFACE_WEIGHT_OFFSET * H * W + pix_id];
+	float surface_alpha = 0.;
 
 	// Traverse all Gaussians
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -688,6 +711,7 @@ renderCUDA(
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 			for (int i = 0; i < C; i++)
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
+			
 			for (int ii = 0; ii < 10; ii++)
 				collected_view2gaussian[10 * block.thread_rank() + ii] = view2gaussian[coll_id * 10 + ii];
 		}
@@ -729,7 +753,7 @@ renderCUDA(
 				continue;
 
 			double min_value = -(BB/AA) * (BB/4.) + CC;
-			
+
 			float power = -0.5f * min_value;
 			if (power > 0.0f){
 				power = 0.0f;
@@ -741,6 +765,17 @@ renderCUDA(
 			if (alpha < 1.0f / 255.0f)
 				continue;
 
+			if(contributor == max_contributor -1)
+			{
+				surface_alpha = alpha;
+			}
+
+			// NDC mapping is taken from 2DGS paper, please check here https://arxiv.org/pdf/2403.17888.pdf
+			const float max_t = t;
+			const float mapped_max_t = (FAR_PLANE * max_t - FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * max_t);
+			
+			float dmax_t_dd = (FAR_PLANE * NEAR_PLANE) / ((FAR_PLANE - NEAR_PLANE) * max_t * max_t);
+			
 			// normalize normal
 			float length = sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2] + 1e-7);
 			const float normal_normalized[3] = { -normal[0] / length, -normal[1] / length, -normal[2] / length};
@@ -767,6 +802,41 @@ renderCUDA(
 				// many that were affected by this Gaussian.
 				atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
 			}
+			
+			//gradient for surface weight
+			if(contributor == max_contributor-1)
+			{
+				dL_dalpha += dL_dsw * T;
+			}
+			else if(contributor < max_contributor-1)
+			{
+				dL_dalpha += dL_dsw * surface_alpha * (-1) * (T / (1 - alpha));
+			}
+			
+			// gradient for the distoration loss is taken from 2DGS paper, please check https://arxiv.org/pdf/2403.17888.pdf
+			float dL_dt = 0.0f;
+			float dL_dmax_t = 0.0f;
+			float dL_dweight = 0.0f;
+
+			if(T > 0.5)
+			{
+				// one_div_square_one_minus_T is from the normalization of distoration_2
+				const float one_div_square_one_minus_T = 1.f / ((1.f - distortion_T_final) * (1.f - distortion_T_final) + 1e-7);
+				dL_dweight += (final_D2 + mapped_max_t * mapped_max_t * final_A - 2 * mapped_max_t * final_D) * dL_dreg * one_div_square_one_minus_T;			
+				//TODO normalization of one_div_square_one_minus_T is missing
+				dL_dmax_t += 2.0f * (T * alpha) * (mapped_max_t * final_A - final_D) * dL_dreg * dmax_t_dd * one_div_square_one_minus_T;
+				// from dL_done_minus_T since 1-T is  sum over weight;
+				dL_dweight += dL_done_minus_T;
+				// detach weight
+				dL_dweight = 0.f;
+			}
+			
+			// only positive alpha gradient is considered
+			// dL_dalpha += max(0.0f, dL_dweight - last_dL_dT);
+			dL_dalpha += dL_dweight - last_dL_dT;
+			// propagate the current weight W_{i} to next weight W_{i-1}
+			last_dL_dT = dL_dweight * alpha + (1 - alpha) * last_dL_dT;
+			
 			float dL_dnormal_normalized[3] = {0};
 			// // Propagate gradients to per-Gaussian normals
 			for (int ch = 0; ch < 3; ch++) {
@@ -785,6 +855,11 @@ renderCUDA(
 				(-dL_dnormal_normalized[1] + dL_dlength * normal[1]) / length,
 				(-dL_dnormal_normalized[2] + dL_dlength * normal[2]) / length
 			};
+			
+			dL_dt = dL_dmax_t;
+			if (contributor == max_contributor-1) {
+				dL_dt += dL_dmax_depth;
+			}
 
 			dL_dalpha *= T;
 			// Update last alpha (to be used in the next iteration)
@@ -797,6 +872,7 @@ renderCUDA(
 				bg_dot_dpixel += bg_color[i] * dL_dpixel[i];
 			dL_dalpha += (-T_final / (1.f - alpha)) * bg_dot_dpixel;
 
+
 			// Helpful reusable temporary variables
 			const float dL_dG = con_o.w * dL_dalpha;
 			const float gdx = G * d.x;
@@ -804,13 +880,17 @@ renderCUDA(
 			const float dG_ddelx = -gdx * con_o.x - gdy * con_o.y;
 			const float dG_ddely = -gdy * con_o.z - gdx * con_o.y;
 
+			// we don't need this for back propagation but it is useful for gaussian density machanism
 			// Update gradients w.r.t. 2D mean position of the Gaussian
 			atomicAdd(&dL_dmean2D[global_id].x, dL_dG * dG_ddelx * ddelx_dx);
 			atomicAdd(&dL_dmean2D[global_id].y, dL_dG * dG_ddely * ddely_dy);
+			// new metric for densification, please see Densification section in our paper (https://arxiv.org/pdf/2404.10772.pdf) for more details.
+			const float abs_dL_dmean2D = abs(dL_dG * dG_ddelx * ddelx_dx) + abs(dL_dG * dG_ddely * ddely_dy);
+            atomicAdd(&dL_dmean2D[global_id].z, abs_dL_dmean2D);
 
 			// Update gradients w.r.t. opacity of the Gaussian
 			atomicAdd(&(dL_dopacity[global_id]), G * dL_dalpha);
-
+	
 			// other gradients
 			// G = exp(power);
 			const float dG_dpower = G;
@@ -823,6 +903,9 @@ renderCUDA(
 			double dL_dA = dL_dmin_value * (BB / AA) * (BB / AA) / 4.f;
 			double dL_dB = dL_dmin_value * -BB / (2 *AA);
 			double dL_dC = dL_dmin_value * 1.0f;
+
+			dL_dA += dL_dt * BB / (2 * AA * AA);
+			dL_dB += dL_dt * -1.f / (2 * AA);
 
 			// const float normal[3] = { view2gaussian_j[0] * ray.x + view2gaussian_j[1] * ray.y + view2gaussian_j[2], 
 			// 						view2gaussian_j[1] * ray.x + view2gaussian_j[3] * ray.y + view2gaussian_j[4],
