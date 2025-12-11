@@ -86,6 +86,7 @@ class OptimizationParams(ParamGroup):
         self.lambda_hard_surface = 0.05
         self.distortion_from_iter = 15000
         self.depth_normal_from_iter = 15000
+        self.hard_surface_from_iter = 15000
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500
