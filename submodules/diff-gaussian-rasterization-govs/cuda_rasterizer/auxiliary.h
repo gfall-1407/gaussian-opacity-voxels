@@ -19,7 +19,9 @@
 #define NUM_WARPS (BLOCK_SIZE/32)
 
 #define DEPTH_OFFSET 3
-#define OUTPUT_CHANNELS 4
+#define MW_OFFSET 4
+#define T_MW_OFFSET 5
+#define OUTPUT_CHANNELS 6
 
 // Spherical harmonics coefficients
 __device__ const float SH_C0 = 0.28209479177387814f;

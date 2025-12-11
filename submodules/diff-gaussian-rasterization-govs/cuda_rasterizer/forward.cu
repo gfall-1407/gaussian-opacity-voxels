@@ -304,6 +304,9 @@ renderCUDA(
 	float C[CHANNELS] = { 0 };
 
 	float depth = 0;
+	float mw_depth = 0;
+	float mw = 0;
+	float t_mw_depth = 0;
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -361,6 +364,14 @@ renderCUDA(
 			{
 				depth = depths[collected_id[j]];
 			}
+			if (T * alpha > mw)
+			{
+				mw_depth = depths[collected_id[j]];
+			}
+			if (T * alpha > mw && T > 0.5)
+			{
+				t_mw_depth = depths[collected_id[j]];
+			}
 
 			T = test_T;
 
@@ -379,6 +390,8 @@ renderCUDA(
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 		out_color[DEPTH_OFFSET * H * W + pix_id] = depth;
+		out_color[MW_DEPTH_OFFSET * H * W + pix_id] = mw_depth;
+		out_color[T_MW_OFFSET * H * W + pix_id] = t_mw_depth;
 	}
 }
 
