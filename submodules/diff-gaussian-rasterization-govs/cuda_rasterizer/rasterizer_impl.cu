@@ -323,6 +323,7 @@ int CudaRasterizer::Rasterizer::forward(
 		tile_grid, block,
 		imgState.ranges,
 		binningState.point_list,
+		geomState.depths,
 		width, height,
 		geomState.means2D,
 		feature_ptr,
