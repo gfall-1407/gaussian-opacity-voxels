@@ -804,11 +804,11 @@ renderCUDA(
 			}
 			
 			//gradient for surface weight
-			if(contributor == max_contributor-1)
+			if((contributor == max_contributor-1) && max_contributor != 0)
 			{
 				dL_dalpha += dL_dsw * T;
 			}
-			else if(contributor < max_contributor-1)
+			else if((contributor < max_contributor-1) && max_contributor != 0)
 			{
 				//dL_dalpha += dL_dsw * surface_alpha * (-1) * (T / (1 - alpha));
 			}
