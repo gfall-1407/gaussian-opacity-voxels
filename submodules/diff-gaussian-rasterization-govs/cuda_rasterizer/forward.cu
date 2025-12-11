@@ -391,7 +391,7 @@ renderCUDA(
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 		out_color[DEPTH_OFFSET * H * W + pix_id] = depth;
 		out_color[MW_DEPTH_OFFSET * H * W + pix_id] = mw_depth;
-		out_color[T_MW_OFFSET * H * W + pix_id] = t_mw_depth;
+		out_color[T_MW_DEPTH_OFFSET * H * W + pix_id] = t_mw_depth;
 	}
 }
 
