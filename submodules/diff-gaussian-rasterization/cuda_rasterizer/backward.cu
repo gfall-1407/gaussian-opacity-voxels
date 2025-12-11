@@ -810,7 +810,7 @@ renderCUDA(
 			}
 			else if(contributor < max_contributor-1)
 			{
-				dL_dalpha += dL_dsw * surface_alpha * (-1) * (T / (1 - alpha));
+				//dL_dalpha += dL_dsw * surface_alpha * (-1) * (T / (1 - alpha));
 			}
 			
 			// gradient for the distoration loss is taken from 2DGS paper, please check https://arxiv.org/pdf/2403.17888.pdf
