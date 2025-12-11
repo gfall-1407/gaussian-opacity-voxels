@@ -79,33 +79,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-        # if iteration == 1:
-        #      with open('render_output/viewpoint.txt', 'w', encoding='utf-8') as viewpoint_f:
-        #           pass
-        # with open('render_output/viewpoint.txt', 'a', encoding='utf-8') as viewpoint_f:
-        #     viewpoint_f.write(str(iteration) + ": " + viewpoint_cam.image_name + "\n")
-        #     for row in viewpoint_cam.R:
-        #         line = ','.join(f'{x:.4f}' for x in row)
-        #         viewpoint_f.write(line)
-        #         viewpoint_f.write('\n')
-        #     T_py = viewpoint_cam.T.tolist()
-        #     T_save = str(T_py) 
-        #     viewpoint_f.write(T_save) 
-        #     viewpoint_f.write('\n')
-        #     viewpoint_f.write('-----------------------\n')
 
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
         render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        
-        # if ((iteration - 1) % 100 == 0 and iteration <= opt.densify_from_iter) or ((iteration - 1) % 5000 == 0 and iteration > opt.densify_from_iter):
-        #     image_np = image.detach().cpu().numpy()
-        #     image_np = np.transpose(image_np, (1, 2, 0))
-        #     array = np.array(image_np*255.0, dtype=np.byte)  
-        #     image_save = Image.fromarray(array, "RGB")  
-        #     image_save.save("render_output/output_" + str(iteration) + ".png" )
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -152,12 +131,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
-        # if iteration == 1:
-        #     with open('render_output/point_count.txt', 'w', encoding='utf-8') as count_f:
-        #         pass
-        # with open('render_output/point_count.txt', 'a', encoding='utf-8') as count_f:
-        #     count_str = str(iteration) + " " + str(gaussians.get_xyz.shape[0]) + '\n'
-        #     count_f.write(count_str)
+        if iteration == 1:
+            with open('render_output/point_count.txt', 'w', encoding='utf-8') as count_f:
+                pass
+        with open('render_output/point_count.txt', 'a', encoding='utf-8') as count_f:
+            count_str = str(iteration) + " " + str(gaussians.get_xyz.shape[0]) + '\n'
+            count_f.write(count_str)
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
