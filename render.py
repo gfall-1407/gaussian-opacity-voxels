@@ -118,7 +118,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
             volume.integrate(rgbd, intrinsic=cam_o3d.intrinsic, extrinsic=cam_o3d.extrinsic)
 
         mesh = volume.extract_triangle_mesh()
-        o3d.io.write_triangle_mesh(os.path.join(model_path, name), mesh)
+        o3d.io.write_triangle_mesh(os.path.join(model_path, mesh_name), mesh)
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():
