@@ -367,12 +367,12 @@ renderCUDA(
 			if (T * alpha > mw)
 			{
 				mw_depth = depths[collected_id[j]];
+				if (T > 0.5)
+				{
+					t_mw_depth = depths[collected_id[j]];
+				}
+				mw = T * alpha;
 			}
-			if (T * alpha > mw && T > 0.5)
-			{
-				t_mw_depth = depths[collected_id[j]];
-			}
-
 			T = test_T;
 
 			// Keep track of last range entry to update this
