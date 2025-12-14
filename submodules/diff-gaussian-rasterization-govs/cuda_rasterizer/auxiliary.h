@@ -18,10 +18,20 @@
 #define BLOCK_SIZE (BLOCK_X * BLOCK_Y)
 #define NUM_WARPS (BLOCK_SIZE/32)
 
-#define DEPTH_OFFSET 3
+#define MEAN_DEPTH_OFFSET 3
+#define MEDIAN_DEPTH_OFFSET 4
+#define DEPTH_DISORTION_OFFSET 5
+#define DISTORTION_OFFSET 6
+#define OUTPUT_CHANNELS 7
+#define DIST_WEIGHT_SIGMA 0.1f
+
 #define MW_DEPTH_OFFSET 4
 #define T_MW_DEPTH_OFFSET 5
-#define OUTPUT_CHANNELS 6
+#define T_02_COUNT_OFFSET 6
+#define T_05_OFFSET 7
+#define T_05_ALPHA_OFFSET 8
+#define T_MAX_OFFSET 9
+#define ALPHA_MAX_OFFSET 10
 
 // Spherical harmonics coefficients
 __device__ const float SH_C0 = 0.28209479177387814f;

@@ -24,6 +24,7 @@ namespace BACKWARD
 		const dim3 grid, dim3 block,
 		const uint2* ranges,
 		const uint32_t* point_list,
+		const float* depths,
 		int W, int H,
 		const float* bg_color,
 		const float2* means2D,
@@ -35,7 +36,8 @@ namespace BACKWARD
 		float3* dL_dmean2D,
 		float4* dL_dconic2D,
 		float* dL_dopacity,
-		float* dL_dcolors);
+		float* dL_dcolors,
+		float* dL_ddepth);
 
 	void preprocess(
 		int P, int D, int M,
@@ -59,7 +61,8 @@ namespace BACKWARD
 		float* dL_dcov3D,
 		float* dL_dsh,
 		glm::vec3* dL_dscale,
-		glm::vec4* dL_drot);
+		glm::vec4* dL_drot,
+		float* dL_ddepth);
 }
 
 #endif

@@ -84,12 +84,26 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if (iteration - 1) == debug_from:
             pipe.debug = True
         render_pkg = render(viewpoint_cam, gaussians, pipe, background)
-        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        rendering, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
-        # Loss
+        image = rendering[0:3, :, :]
+        mean_depth = rendering[3, :, :]
+        median_depth = rendering[4, :, :]
+        depth_disortion = rendering[5, :, :]
+
+        # RGB Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        rbg_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        
+        lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
+        lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
+        lambda_thin = opt.lambda_thin if iteration > 10000 else 0.0
+
+        #depth disortion LOSSES 
+        depth_disortion_loss = lambda_dist * depth_disortion.mean()   
+
+        loss = rbg_loss + depth_disortion_loss
         loss.backward()
 
         iter_end.record()
@@ -131,12 +145,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
-        if iteration == 1:
-            with open('render_output/point_count.txt', 'w', encoding='utf-8') as count_f:
-                pass
-        with open('render_output/point_count.txt', 'a', encoding='utf-8') as count_f:
-            count_str = str(iteration) + " " + str(gaussians.get_xyz.shape[0]) + '\n'
-            count_f.write(count_str)
+            if (iteration % 100 == 0):
+                T_05_np = rendering[7, :, :].cpu().numpy()
+                T_05_alpha_np = rendering[8, :, :].cpu().numpy()
+                print("\n[ITER {}] T_05 mean: {}, T_05 min: {}, T_05 max: {}, T_05_alpha mean: {}, T_05_alpha min: {}, T_05_alpha max: {}".format(iteration, np.mean(T_05_np), np.min(T_05_np), np.max(T_05_np), np.mean(T_05_alpha_np), np.min(T_05_alpha_np), np.max(T_05_alpha_np)))
+
+
+        # if iteration == 1:
+        #     with open('render_output/point_count.txt', 'w', encoding='utf-8') as count_f:
+        #         pass
+        # with open('render_output/point_count.txt', 'a', encoding='utf-8') as count_f:
+        #     count_str = str(iteration) + " " + str(gaussians.get_xyz.shape[0]) + '\n'
+        #     count_f.write(count_str)
 
 def prepare_output_and_logger(args):    
     if not args.model_path:

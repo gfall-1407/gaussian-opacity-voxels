@@ -303,10 +303,15 @@ renderCUDA(
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
 
-	float depth = 0;
-	float mw_depth = 0;
-	float mw = 0;
-	float t_mw_depth = 0;
+	uint32_t median_contributor = 0;
+	float mean_depth = 0;
+	float mean_depth_weight = 0;
+	float median_depth_prev = 0;
+	float median_T_prev = 0;
+	float median_alpha_prev = 0;
+	float median_depth_after = 0;
+	float median_T_after = 0;
+	float median_depth = 0;
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -360,19 +365,28 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
 
-			if(T>0.5)
+			float local_depth = depths[collected_id[j]];
+			if(T>=0.5)
 			{
-				depth = depths[collected_id[j]];
+				median_depth_prev = local_depth;
+				median_T_prev = T;
+				median_alpha_prev = alpha;
 			}
-			if (T * alpha > mw)
+			float dist_weight = 1;
+			if(T<0.5)
 			{
-				mw_depth = depths[collected_id[j]];
-				if (T > 0.5)
+				if(contributor == median_contributor + 1)
 				{
-					t_mw_depth = depths[collected_id[j]];
+					median_depth_after = local_depth;
+					median_T_after = T;
+					median_depth = median_depth_prev + (log(0.5)-log(median_T_prev))/(log(median_T_after)-log(median_T_prev)) * (median_depth_after - median_depth_prev);
 				}
-				mw = T * alpha;
+				float dist_weight_sigma = DIST_WEIGHT_SIGMA;
+				dist_weight = exp(-(median_depth - local_depth)*(median_depth - local_depth)/(2*dist_weight_sigma*dist_weight_sigma));
 			}
+			mean_depth += local_depth * alpha * T * dist_weight;
+			mean_depth_weight += alpha * T * dist_weight;
+
 			T = test_T;
 
 			// Keep track of last range entry to update this
@@ -385,13 +399,17 @@ renderCUDA(
 	// rendering data to the frame and auxiliary buffers.
 	if (inside)
 	{
+		mean_depth /= (mean_depth_weight + 1e-8f);
 		final_T[pix_id] = T;
+		final_T[pix_id + H * W] = mean_depth;
+		final_T[pix_id + 2 * H * W] = median_depth;
 		n_contrib[pix_id] = last_contributor;
+		n_contrib[pix_id + H * W] = median_contributor;
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
-		out_color[DEPTH_OFFSET * H * W + pix_id] = depth;
-		out_color[MW_DEPTH_OFFSET * H * W + pix_id] = mw_depth;
-		out_color[T_MW_DEPTH_OFFSET * H * W + pix_id] = t_mw_depth;
+		out_color[MEAN_DEPTH_OFFSET * H * W + pix_id] = mean_depth;
+		out_color[MEDIAN_DEPTH_OFFSET * H * W + pix_id] = median_depth;
+		out_color[DEPTH_DISORTION_OFFSET * H * W + pix_id] = (median_depth - mean_depth) * (median_depth - mean_depth);
 	}
 }
 
