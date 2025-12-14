@@ -145,7 +145,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
             
-            if iteration % 500 == 0:
+            if iteration % 2000 == 0:
                 image_np = image.detach().cpu().numpy()
                 image_np = np.transpose(image_np, (1, 2, 0))
                 array = np.array(image_np*255.0, dtype=np.byte)  
