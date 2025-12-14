@@ -145,12 +145,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
-            if (iteration % 100 == 0):
-                T_05_np = rendering[7, :, :].cpu().numpy()
-                T_05_alpha_np = rendering[8, :, :].cpu().numpy()
-                print("\n[ITER {}] T_05 mean: {}, T_05 min: {}, T_05 max: {}, T_05_alpha mean: {}, T_05_alpha min: {}, T_05_alpha max: {}".format(iteration, np.mean(T_05_np), np.min(T_05_np), np.max(T_05_np), np.mean(T_05_alpha_np), np.min(T_05_alpha_np), np.max(T_05_alpha_np)))
-
-
         # if iteration == 1:
         #     with open('render_output/point_count.txt', 'w', encoding='utf-8') as count_f:
         #         pass
