@@ -145,12 +145,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
             
-            if iteration % 2000 == 0:
+            if iteration % 100 == 0:
                 image_np = image.detach().cpu().numpy()
                 image_np = np.transpose(image_np, (1, 2, 0))
                 array = np.array(image_np*255.0, dtype=np.byte)  
                 image_save = Image.fromarray(array, "RGB")  
                 image_save.save("test/output_" + str(iteration) + ".png" )
+                print(mean_depth.mean(), median_depth.mean(), depth_disortion.mean())
 
         # if iteration == 1:
         #     with open('render_output/point_count.txt', 'w', encoding='utf-8') as count_f:

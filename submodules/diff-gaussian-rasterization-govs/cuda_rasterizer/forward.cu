@@ -308,7 +308,6 @@ renderCUDA(
 	float mean_depth_weight = 0;
 	float median_depth_prev = 0;
 	float median_T_prev = 0;
-	float median_alpha_prev = 0;
 	float median_depth_after = 0;
 	float median_T_after = 0;
 	float median_depth = 0;
@@ -370,7 +369,7 @@ renderCUDA(
 			{
 				median_depth_prev = local_depth;
 				median_T_prev = T;
-				median_alpha_prev = alpha;
+				median_contributor = contributor;
 			}
 			float dist_weight = 1;
 			if(T<0.5)
@@ -404,7 +403,7 @@ renderCUDA(
 		final_T[pix_id + H * W] = mean_depth;
 		final_T[pix_id + 2 * H * W] = median_depth;
 		n_contrib[pix_id] = last_contributor;
-		n_contrib[pix_id + H * W] = median_contributor;
+		n_contrib[pix_id + H * W] = last_contributor;
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 		out_color[MEAN_DEPTH_OFFSET * H * W + pix_id] = mean_depth;
