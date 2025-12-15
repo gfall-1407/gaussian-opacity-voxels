@@ -97,13 +97,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         rbg_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         
         lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
-        lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
-        lambda_thin = opt.lambda_thin if iteration > 10000 else 0.0
+        # lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
+        # lambda_thin = opt.lambda_thin if iteration > 10000 else 0.0
 
         #depth disortion LOSSES 
         depth_disortion_loss = lambda_dist * depth_disortion.mean()   
 
-        loss = rbg_loss + depth_disortion_loss
+        loss = rbg_loss # + depth_disortion_loss
         loss.backward()
 
         iter_end.record()
@@ -198,7 +198,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
+                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"][0:3, :, :], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     if tb_writer and (idx < 5):
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)

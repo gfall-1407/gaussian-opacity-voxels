@@ -24,6 +24,74 @@ from gaussian_renderer import GaussianModel
 import open3d as o3d
 import numpy as np
 
+import matplotlib.pyplot as plt
+
+def save_depth_2_point_cloud(depth, FoVx, FoVy, filename):
+    """
+    image: (3, H, W) numpy array, 范围 [0, 1] 或 [0, 255]
+    depth: (H, W) numpy array
+    viewpoint_cam: 包含相机参数的对象
+    filename: 保存路径 (.ply)
+    """
+    # 1. 获取图像尺寸
+    H, W = depth.shape
+    
+    # 2. 计算相机内参 (焦距)
+    # Gaussian Splatting 代码中通常存储的是 FoVx 和 FoVy
+    fx = W / (2 * np.tan(FoVx / 2))
+    fy = H / (2 * np.tan(FoVy / 2))
+    cx = W / 2.0
+    cy = H / 2.0
+
+    # 3. 创建像素坐标网格
+    u, v = np.meshgrid(np.arange(W), np.arange(H))
+    u = u.flatten()
+    v = v.flatten()
+    z = depth.flatten()
+
+    # 4. 过滤掉深度无效的点 (比如深度极小或极大)
+    valid_mask = (z > 0.00) # 根据场景调整阈值
+    u = u[valid_mask]
+    v = v[valid_mask]
+    z = z[valid_mask]
+
+    # 5. 反投影：从 2D 像素 -> 3D 相机坐标系
+    x = (u - cx) * z / fx
+    y = (v - cy) * z / fy
+    # 注意：Gaussian Splatting 的相机坐标系通常是 Y向下，Z向前
+    # 如果生成的点云上下颠倒，可以尝试 y = -y 
+    
+    # 堆叠 xyz
+    xyz = np.stack([x, y, z], axis=1)
+
+    # 6. 转世界坐标系 (可选)
+    # 如果你想看它在世界中的位置，需要乘以相机外参的逆 (c2w)
+    # viewpoint_cam.world_view_transform 通常是 w2c
+    # c2w = torch.inverse(viewpoint_cam.world_view_transform).cpu().numpy()
+    # R = c2w[:3, :3]
+    # t = c2w[:3, 3]
+    # xyz = xyz @ R.T + t
+
+    # 8. 写入 PLY 文件头
+    num_points = xyz.shape[0]
+    header = f"""ply
+        format ascii 1.0
+        element vertex {num_points}
+        property float x
+        property float y
+        property float z
+        end_header
+    """
+    
+    # 9. 保存数据
+    with open(filename, 'w') as f:
+        f.write(header)
+        for i in range(num_points):
+            f.write(f"{xyz[i,0]:.4f} {xyz[i,1]:.4f} {xyz[i,2]:.4f}\n")
+            
+    print(f"Point cloud saved to {filename}")
+
+
 def to_cam_open3d(viewpoint_stack):
     camera_traj = []
     for i, viewpoint_cam in enumerate(viewpoint_stack):
@@ -67,22 +135,27 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     makedirs(gts_path, exist_ok=True)
 
     rgbmaps = []
-    depthmaps = []
-    mw_depthmaps = []
-    t_mw_depthmaps = []
+    median_depthmaps = []
     viewpoint_stack = []
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         rendering_pkg = render(view, gaussians, pipeline, background)["render"]
         rendering = rendering_pkg[0:3, :, :]
-        depth = rendering_pkg[3:4, :, :]
-        mw_depth = rendering_pkg[4:5, :, :]
-        t_mw_depth = rendering_pkg[5:6, :, :]
+        mean_depth = rendering_pkg[3, :, :]
+        median_depth = rendering_pkg[4, :, :]
         rgbmaps.append(rendering.cpu())
-        depthmaps.append(depth.cpu())
-        mw_depthmaps.append(mw_depth.cpu())
-        t_mw_depthmaps.append(t_mw_depth.cpu())
+        median_depthmaps.append(median_depth.cpu())
         viewpoint_stack.append(view)
+
+        d_np = mean_depth.detach().cpu().numpy()
+        d_map = d_np.squeeze()
+        plt.imsave('test/mean_depth_' + str(idx) +'.png', d_map, cmap='plasma')
+        save_depth_2_point_cloud(d_map, view.FoVx, view.FoVy, 'test/d_' + str(idx) +'.ply')
+        
+        md_np = median_depth.detach().cpu().numpy()
+        md_map = md_np.squeeze()
+        plt.imsave('test/median_depth_' + str(idx) +'.png', md_map, cmap='plasma')
+        save_depth_2_point_cloud(md_map, view.FoVx, view.FoVy, 'test/md_' + str(idx) +'.ply')
     
     if if_mesh:
         torch.cuda.empty_cache()
@@ -104,7 +177,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
         for i, cam_o3d in tqdm(enumerate(to_cam_open3d(viewpoint_stack)), desc="TSDF integration progress"):
             rgb = rgbmaps[i]
-            depth = depthmaps[i]
+            depth = median_depthmaps[i]
             
             # if we have mask provided, use it
             # if mask_backgrond and (viewpoint_stack[i].gt_alpha_mask is not None):
@@ -122,58 +195,6 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         mesh = volume.extract_triangle_mesh()
         o3d.io.write_triangle_mesh(os.path.join('test/', 'fuse.ply'), mesh)
 
-        mw_volume = o3d.pipelines.integration.ScalableTSDFVolume(
-            voxel_length = voxel_size,
-            sdf_trunc = sdf_trunc,
-            color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8
-        )
-
-        for i, cam_o3d in tqdm(enumerate(to_cam_open3d(viewpoint_stack)), desc="TSDF integration progress"):
-            rgb = rgbmaps[i]
-            depth = mw_depthmaps[i]
-            
-            # if we have mask provided, use it
-            # if mask_backgrond and (viewpoint_stack[i].gt_alpha_mask is not None):
-            #     depth[(viewpoint_stack[i].gt_alpha_mask < 0.5)] = 0
-
-            # make open3d rgbd
-            rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-                o3d.geometry.Image(np.asarray(np.clip(rgb.permute(1,2,0).cpu().numpy(), 0.0, 1.0) * 255, order="C", dtype=np.uint8)),
-                o3d.geometry.Image(np.asarray(depth.permute(1,2,0).cpu().numpy(), order="C")),
-                depth_trunc = depth_trunc, convert_rgb_to_intensity=False,
-                depth_scale = 1.0
-            )
-
-            mw_volume.integrate(rgbd, intrinsic=cam_o3d.intrinsic, extrinsic=cam_o3d.extrinsic)
-        mesh = mw_volume.extract_triangle_mesh()
-        o3d.io.write_triangle_mesh(os.path.join('test/', 'mw_fuse.ply'), mesh)
-
-        t_mw_volume = o3d.pipelines.integration.ScalableTSDFVolume(
-            voxel_length = voxel_size,
-            sdf_trunc = sdf_trunc,
-            color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8
-        )
-
-        for i, cam_o3d in tqdm(enumerate(to_cam_open3d(viewpoint_stack)), desc="TSDF integration progress"):
-            rgb = rgbmaps[i]
-            depth = t_mw_depthmaps[i]
-            
-            # if we have mask provided, use it
-            # if mask_backgrond and (viewpoint_stack[i].gt_alpha_mask is not None):
-            #     depth[(viewpoint_stack[i].gt_alpha_mask < 0.5)] = 0
-
-            # make open3d rgbd
-            rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-                o3d.geometry.Image(np.asarray(np.clip(rgb.permute(1,2,0).cpu().numpy(), 0.0, 1.0) * 255, order="C", dtype=np.uint8)),
-                o3d.geometry.Image(np.asarray(depth.permute(1,2,0).cpu().numpy(), order="C")),
-                depth_trunc = depth_trunc, convert_rgb_to_intensity=False,
-                depth_scale = 1.0
-            )
-
-            t_mw_volume.integrate(rgbd, intrinsic=cam_o3d.intrinsic, extrinsic=cam_o3d.extrinsic)
-        mesh = mw_volume.extract_triangle_mesh()
-        o3d.io.write_triangle_mesh(os.path.join('test/', 't_mw_fuse.ply'), mesh)
-
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
@@ -187,7 +208,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         voxel_size = args.voxel_size
         sdf_trunc = args.sdf_trunc
 
-        render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, name, depth_trunc, voxel_size, sdf_trunc, True)
+        render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, name, depth_trunc, voxel_size, sdf_trunc, False)
 
 if __name__ == "__main__":
     # Set up command line argument parser

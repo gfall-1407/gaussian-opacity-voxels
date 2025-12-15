@@ -80,45 +80,6 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         gt = view.original_image[0:3, :, :]
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
-    
-    if if_mesh:
-        torch.cuda.empty_cache()
-        c2ws = np.array([np.linalg.inv(np.asarray((cam.world_view_transform.T).cpu().numpy())) for cam in viewpoint_stack])
-        poses = c2ws[:,:3,:] @ np.diag([1, -1, -1, 1])
-        center = (focus_point_fn(poses))
-        radius = np.linalg.norm(c2ws[:,:3,3] - center, axis=-1).min()
-        center = torch.from_numpy(center).float().cuda()
-
-        depth_trunc = (radius * 2.0) if depth_trunc < 0  else depth_trunc
-        voxel_size = (depth_trunc / 1024) if voxel_size < 0 else voxel_size
-        sdf_trunc = 5.0 * voxel_size if sdf_trunc < 0 else sdf_trunc
-        
-        volume = o3d.pipelines.integration.ScalableTSDFVolume(
-            voxel_length = voxel_size,
-            sdf_trunc = sdf_trunc,
-            color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8
-        )
-
-        for i, cam_o3d in tqdm(enumerate(to_cam_open3d(viewpoint_stack)), desc="TSDF integration progress"):
-            rgb = rgbmaps[i]
-            depth = depthmaps[i]
-            
-            # if we have mask provided, use it
-            # if mask_backgrond and (viewpoint_stack[i].gt_alpha_mask is not None):
-            #     depth[(viewpoint_stack[i].gt_alpha_mask < 0.5)] = 0
-
-            # make open3d rgbd
-            rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-                o3d.geometry.Image(np.asarray(np.clip(rgb.permute(1,2,0).cpu().numpy(), 0.0, 1.0) * 255, order="C", dtype=np.uint8)),
-                o3d.geometry.Image(np.asarray(depth.permute(1,2,0).cpu().numpy(), order="C")),
-                depth_trunc = depth_trunc, convert_rgb_to_intensity=False,
-                depth_scale = 1.0
-            )
-
-            volume.integrate(rgbd, intrinsic=cam_o3d.intrinsic, extrinsic=cam_o3d.extrinsic)
-
-        mesh = volume.extract_triangle_mesh()
-        o3d.io.write_triangle_mesh(os.path.join(model_path, mesh_name), mesh)
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():
