@@ -90,6 +90,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         mean_depth = rendering[3, :, :]
         median_depth = rendering[4, :, :]
         depth_disortion = rendering[5, :, :]
+        density_disortion = rendering[6, :, :]
 
         # RGB Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -97,13 +98,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         rbg_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         
         lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
+        lambda_density = opt.lambda_density if iteration > 3000 else 0.0
         # lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
         # lambda_thin = opt.lambda_thin if iteration > 10000 else 0.0
 
         #depth disortion LOSSES 
-        depth_disortion_loss = lambda_dist * depth_disortion.mean()   
+        depth_disortion_loss = lambda_dist * depth_disortion.mean()  
 
-        loss = rbg_loss # + depth_disortion_loss
+        # density disortion LOSSES
+        density_disortion_loss = lambda_density * density_disortion.mean() 
+
+        loss = rbg_loss + depth_disortion_loss + density_disortion_loss
         loss.backward()
 
         iter_end.record()
@@ -145,13 +150,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
             
-            if iteration % 100 == 0:
+            if iteration % 2000 == 0:
                 image_np = image.detach().cpu().numpy()
                 image_np = np.transpose(image_np, (1, 2, 0))
                 array = np.array(image_np*255.0, dtype=np.byte)  
                 image_save = Image.fromarray(array, "RGB")  
                 image_save.save("test/output_" + str(iteration) + ".png" )
-                print(mean_depth.mean(), median_depth.mean(), depth_disortion.mean())
 
         # if iteration == 1:
         #     with open('render_output/point_count.txt', 'w', encoding='utf-8') as count_f:
