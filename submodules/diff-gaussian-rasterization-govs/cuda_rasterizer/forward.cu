@@ -409,6 +409,7 @@ renderCUDA(
 		out_color[MEAN_DEPTH_OFFSET * H * W + pix_id] = mean_depth;
 		out_color[MEDIAN_DEPTH_OFFSET * H * W + pix_id] = median_depth;
 		out_color[DEPTH_DISORTION_OFFSET * H * W + pix_id] = (median_depth - mean_depth) * (median_depth - mean_depth);
+		out_color[DENSITY_DISORTION_OFFSET * H * W + pix_id] = (median_depth - mean_depth) * (median_depth - mean_depth);
 	}
 }
 

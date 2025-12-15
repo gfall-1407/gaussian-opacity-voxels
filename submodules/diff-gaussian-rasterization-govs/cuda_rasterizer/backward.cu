@@ -454,9 +454,10 @@ renderCUDA(
 	float dmedian_depth_dmedian_T_before = 0;
 	const int median_contributor = inside ? n_contrib[pix_id + H * W] : 0;
 	float dL_ddis = dL_dpixels[pix_id + DEPTH_DISORTION_OFFSET * H * W];
+	float dL_ddensity= dL_dpixels[pix_id + DENSITY_DISORTION_OFFSET * H * W];
 
 	float ddis_dmean_depth = -2*(median_depth - mean_depth);
-	float ddis_dmedian_depth = 2*(median_depth - mean_depth);
+	float ddensity_dmedian_depth = 2*(median_depth - mean_depth);
  
 	// We start from the back. The ID of the last contributing
 	// Gaussian is known from each pixel from the forward.
@@ -547,11 +548,11 @@ renderCUDA(
 				dmedian_depth_dmedian_T_before = median_dist * ((log(0.5)-log(median_T_after))/(median_T_before*(log(median_T_after)-log(median_T_before))*(log(median_T_after)-log(median_T_before))));
 				float dmedian_depth_dmedian_T_after = median_dist * ((log(median_T_before)-log(0.5))/(median_T_after*(log(median_T_after)-log(median_T_before))*(log(median_T_after)-log(median_T_before))));
 				dmedian_depth_dmedian_T_before += dmedian_depth_dmedian_T_after * (1-alpha);
-				dL_dalpha += -(dL_ddis * ddis_dmedian_depth * dmedian_depth_dmedian_T_after * T);
+				dL_dalpha += -(dL_ddensity * ddensity_dmedian_depth * dmedian_depth_dmedian_T_after * T);
 			}
 			if(contributor < median_contributor -1)
 			{
-				dL_dalpha += -(dL_ddis * ddis_dmedian_depth * dmedian_depth_dmedian_T_before)/(1-alpha);
+				dL_dalpha += -(dL_ddensity * ddensity_dmedian_depth * dmedian_depth_dmedian_T_before)/(1-alpha);
 			}
 
 			// Propagate gradients to per-Gaussian colors and keep
