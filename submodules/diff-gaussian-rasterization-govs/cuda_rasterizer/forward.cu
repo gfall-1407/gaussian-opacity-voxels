@@ -303,7 +303,8 @@ renderCUDA(
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
 
-	uint32_t median_contributor = 0;
+	uint32_t median_contributor_before = -1;
+	uint32_t median_contributor_after = -1;
 	float mean_depth = 0;
 	float mean_depth_weight = 0;
 	float median_depth_prev = 0;
@@ -369,13 +370,14 @@ renderCUDA(
 			{
 				median_depth_prev = local_depth;
 				median_T_prev = T;
-				median_contributor = contributor;
+				median_contributor_before = contributor;
 			}
 			float dist_weight = 1;
 			if(T<0.5)
 			{
-				if(contributor == median_contributor + 1)
+				if(median_contributor_after == -1)
 				{
+					median_contributor_after = contributor;
 					median_depth_after = local_depth;
 					median_T_after = T;
 					median_depth = median_depth_prev + (log(0.5)-log(median_T_prev))/(log(median_T_after)-log(median_T_prev)) * (median_depth_after - median_depth_prev);
@@ -398,18 +400,20 @@ renderCUDA(
 	// rendering data to the frame and auxiliary buffers.
 	if (inside)
 	{
+		bool has_median = (median_contributor_before != -1 && median_contributor_after != -1);
 		mean_depth /= (mean_depth_weight + 1e-8f);
 		final_T[pix_id] = T;
 		final_T[pix_id + H * W] = mean_depth;
 		final_T[pix_id + 2 * H * W] = median_depth;
 		n_contrib[pix_id] = last_contributor;
-		n_contrib[pix_id + H * W] = last_contributor;
+		n_contrib[pix_id + H * W] = has_median ? median_contributor_before : -1;
+		n_contrib[pix_id + 2 * H * W] = has_median ? median_contributor_after : -1;
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 		out_color[MEAN_DEPTH_OFFSET * H * W + pix_id] = mean_depth;
-		out_color[MEDIAN_DEPTH_OFFSET * H * W + pix_id] = median_depth;
-		out_color[DEPTH_DISORTION_OFFSET * H * W + pix_id] = (median_depth - mean_depth) * (median_depth - mean_depth);
-		out_color[DENSITY_DISORTION_OFFSET * H * W + pix_id] = (median_depth - mean_depth) * (median_depth - mean_depth);
+		out_color[MEDIAN_DEPTH_OFFSET * H * W + pix_id] = has_median ? median_depth : 0;
+		out_color[DEPTH_DISORTION_OFFSET * H * W + pix_id] = has_median ? (median_depth - mean_depth) * (median_depth - mean_depth) : 0;
+		out_color[DENSITY_DISORTION_OFFSET * H * W + pix_id] = has_median ? (median_depth - mean_depth) * (median_depth - mean_depth) : 0;
 	}
 }
 

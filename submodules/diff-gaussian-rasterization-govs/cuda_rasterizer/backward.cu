@@ -452,7 +452,8 @@ renderCUDA(
 	float median_depth_before = 0;
 	float median_depth_after = 0;
 	float dmedian_depth_dmedian_T_before = 0;
-	const int median_contributor = inside ? n_contrib[pix_id + H * W] : 0;
+	const int median_contributor_before = inside ? n_contrib[pix_id + H * W] : -1;
+	const int median_contributor_after = inside ? n_contrib[pix_id + 2 * H * W] : -1;
 	float dL_ddis = dL_dpixels[pix_id + DEPTH_DISORTION_OFFSET * H * W];
 	float dL_ddensity= dL_dpixels[pix_id + DENSITY_DISORTION_OFFSET * H * W];
 
@@ -525,9 +526,9 @@ renderCUDA(
 			float local_depth = depths[global_id];
 			// Mean Depth-related gradients
 			float dist_weight = 1;
+			float dist_weight_sigma = DIST_WEIGHT_SIGMA;
 			if(T<0.5)
 			{
-				float dist_weight_sigma = DIST_WEIGHT_SIGMA;
 				dist_weight = exp(-(median_depth - local_depth)*(median_depth - local_depth)/(2*dist_weight_sigma*dist_weight_sigma));
 			}
 			float dmean_depth_ddepth = alpha * T * dist_weight;
@@ -535,12 +536,12 @@ renderCUDA(
 
 			float dL_dalpha = 0.0f;
 			// Median depth-related gradients
-			if(contributor == median_contributor)
+			if(contributor == median_contributor_after-1)
 			{
 				median_T_after = T;
 				median_depth_after = local_depth;
 			}
-			if(contributor == median_contributor -1)
+			if(contributor == median_contributor_before-1)
 			{
 				median_T_before = T;
 				median_depth_before = local_depth;
@@ -550,7 +551,7 @@ renderCUDA(
 				dmedian_depth_dmedian_T_before += dmedian_depth_dmedian_T_after * (1-alpha);
 				dL_dalpha += -(dL_ddensity * ddensity_dmedian_depth * dmedian_depth_dmedian_T_after * T);
 			}
-			if(contributor < median_contributor -1)
+			if(contributor < median_contributor_before -1)
 			{
 				dL_dalpha += -(dL_ddensity * ddensity_dmedian_depth * dmedian_depth_dmedian_T_before)/(1-alpha);
 			}
