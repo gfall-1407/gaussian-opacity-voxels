@@ -108,7 +108,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # density disortion LOSSES
         density_disortion_loss = lambda_density * density_disortion.mean() 
 
-        loss = rbg_loss #+ depth_disortion_loss + density_disortion_loss
+        loss = rbg_loss + depth_disortion_loss + density_disortion_loss
         loss.backward()
 
         iter_end.record()
