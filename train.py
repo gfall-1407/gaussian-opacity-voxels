@@ -121,7 +121,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         normal_error = (1 - (normal * gaussian_normal).sum(dim=0))[None]
         normal_loss = lambda_normal * (normal_error).mean()
 
-        loss = rbg_loss #+ depth_disortion_loss + density_disortion_loss
+        loss = rbg_loss + depth_disortion_loss + density_disortion_loss
         loss.backward()
 
         iter_end.record()

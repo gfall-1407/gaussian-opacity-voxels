@@ -141,21 +141,21 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         rendering_pkg = render(view, gaussians, pipeline, background)["render"]
         rendering = rendering_pkg[0:3, :, :]
-        mean_depth = rendering_pkg[3, :, :]
-        median_depth = rendering_pkg[4, :, :]
+        mean_depth = rendering_pkg[3:4, :, :]
+        median_depth = rendering_pkg[4:5, :, :]
         rgbmaps.append(rendering.cpu())
         median_depthmaps.append(median_depth.cpu())
         viewpoint_stack.append(view)
 
-        d_np = mean_depth.detach().cpu().numpy()
-        d_map = d_np.squeeze()
-        plt.imsave('test/mean_depth_' + str(idx) +'.png', d_map, cmap='plasma')
-        save_depth_2_point_cloud(d_map, view.FoVx, view.FoVy, 'test/d_' + str(idx) +'.ply')
+        # d_np = mean_depth.detach().cpu().numpy()
+        # d_map = d_np.squeeze()
+        # plt.imsave('test/mean_depth_' + str(idx) +'.png', d_map, cmap='plasma')
+        # save_depth_2_point_cloud(d_map, view.FoVx, view.FoVy, 'test/d_' + str(idx) +'.ply')
         
-        md_np = median_depth.detach().cpu().numpy()
-        md_map = md_np.squeeze()
-        plt.imsave('test/median_depth_' + str(idx) +'.png', md_map, cmap='plasma')
-        save_depth_2_point_cloud(md_map, view.FoVx, view.FoVy, 'test/md_' + str(idx) +'.ply')
+        # md_np = median_depth.detach().cpu().numpy()
+        # md_map = md_np.squeeze()
+        # plt.imsave('test/median_depth_' + str(idx) +'.png', md_map, cmap='plasma')
+        # save_depth_2_point_cloud(md_map, view.FoVx, view.FoVy, 'test/md_' + str(idx) +'.ply')
     
     if if_mesh:
         torch.cuda.empty_cache()
@@ -208,7 +208,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         voxel_size = args.voxel_size
         sdf_trunc = args.sdf_trunc
 
-        render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, name, depth_trunc, voxel_size, sdf_trunc, False)
+        render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, name, depth_trunc, voxel_size, sdf_trunc, True)
 
 if __name__ == "__main__":
     # Set up command line argument parser
