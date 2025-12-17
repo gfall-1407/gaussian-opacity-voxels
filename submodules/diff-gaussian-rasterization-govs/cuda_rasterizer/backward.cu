@@ -278,7 +278,7 @@ __global__ void computeCov2DCUDA(int P,
 
 // Backward pass for the conversion of scale and rotation to a 
 // 3D covariance matrix for each Gaussian. 
-__device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const glm::vec4 rot, const float* dL_dcov3Ds, glm::vec3* dL_dscales, glm::vec4* dL_drots)
+__device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const glm::vec4 rot, const float* dL_dcov3Ds, const float3* dL_dnormals, glm::vec3* dL_dscales, glm::vec4* dL_drots)
 {
 	// Recompute (intermediate) results for the 3D covariance computation.
 	glm::vec4 q = rot;// / glm::length(rot);
@@ -327,9 +327,33 @@ __device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const gl
 	dL_dscale->y = glm::dot(Rt[1], dL_dMt[1]);
 	dL_dscale->z = glm::dot(Rt[2], dL_dMt[2]);
 
+	float3* dL_dnorm = dL_dnormals + idx;
+
 	dL_dMt[0] *= s.x;
 	dL_dMt[1] *= s.y;
 	dL_dMt[2] *= s.z;
+
+
+	if (dL_dnorm != nullptr)
+    {
+        float sx = s.x;
+        float sy = s.y;
+        float sz = s.z;
+
+        int min_axis_idx = 0;
+        float min_scale = sx;
+
+        if (sy < min_scale) {
+            min_scale = sy;
+            min_axis_idx = 1;
+        }
+        if (sz < min_scale) {
+            min_axis_idx = 2;
+        }
+        dL_dMt[min_axis_idx][0] += dL_dN.x;
+        dL_dMt[min_axis_idx][1] += dL_dN.y;
+        dL_dMt[min_axis_idx][2] += dL_dN.z;
+    }
 
 	// Gradients of loss w.r.t. normalized quaternion
 	glm::vec4 dL_dq;
@@ -358,6 +382,7 @@ __global__ void preprocessCUDA(
 	const float scale_modifier,
 	const float* proj,
 	const glm::vec3* campos,
+	const float3* dL_dnormals,
 	const float3* dL_dmean2D,
 	glm::vec3* dL_dmeans,
 	float* dL_dcolor,
@@ -395,7 +420,7 @@ __global__ void preprocessCUDA(
 
 	// Compute gradient updates due to computing covariance from scale/rotation
 	if (scales)
-		computeCov3D(idx, scales[idx], scale_modifier, rotations[idx], dL_dcov3D, dL_dscale, dL_drot);
+		computeCov3D(idx, scales[idx], scale_modifier, rotations[idx], dL_dcov3D, dL_dnormals, dL_dscale, dL_drot);
 }
 
 // Backward version of the rendering procedure.
@@ -417,7 +442,8 @@ renderCUDA(
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
-	float* __restrict__ dL_ddepths)
+	float* __restrict__ dL_ddepths,
+	float3* __restrict__ dL_dnormals,)
 {
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -454,11 +480,19 @@ renderCUDA(
 	float dmedian_depth_dmedian_T_before = 0;
 	const int median_contributor_before = inside ? n_contrib[pix_id + H * W] : -1;
 	const int median_contributor_after = inside ? n_contrib[pix_id + 2 * H * W] : -1;
-	float dL_ddis = dL_dpixels[pix_id + DEPTH_DISORTION_OFFSET * H * W];
-	float dL_ddensity= dL_dpixels[pix_id + DENSITY_DISORTION_OFFSET * H * W];
+	float dL_ddis = inside ? dL_dpixels[pix_id + DEPTH_DISORTION_OFFSET * H * W] : 0;
+	float dL_ddensity= inside ? dL_dpixels[pix_id + DENSITY_DISORTION_OFFSET * H * W] : 0;
 
 	float ddis_dmean_depth = -2*(median_depth - mean_depth);
 	float ddensity_dmedian_depth = 2*(median_depth - mean_depth);
+
+	float dL_dmean_depth = inside ? dL_ddis * ddis_dmean_depth + dL_dpixels[pix_id + MEAN_DEPTH_OFFSET * H * W] : 0;
+	float dL_dmedian_depth = inside ? dL_ddensity * ddensity_dmedian_depth + dL_dpixels[pix_id + MEDIAN_DEPTH_OFFSET * H * W] : 0;
+
+	float dL_dmean_normal[3] = {0}; 
+	if (inside)
+		for(int i =0; i<3; i++)
+			dL_dmean_normal[i] = dL_dpixels[pix_id + (MEAN_NORMAL_OFFSET + i) * H * W];
  
 	// We start from the back. The ID of the last contributing
 	// Gaussian is known from each pixel from the forward.
@@ -532,7 +566,12 @@ renderCUDA(
 				dist_weight = exp(-(median_depth - local_depth)*(median_depth - local_depth)/(2*dist_weight_sigma*dist_weight_sigma));
 			}
 			float dmean_depth_ddepth = alpha * T * dist_weight;
-			dL_ddepths[global_id] += dL_ddis * ddis_dmean_depth * dmean_depth_ddepth;
+			dL_ddepths[global_id] += dL_dmean_depth * dmean_depth_ddepth;
+
+			//normal-related gradients
+			atocmicAdd(&dL_dnormals[global_id].x, dL_dmean_normal[0] * alpha * T * dist_weight);
+			atomicAdd(&dL_dnormals[global_id].y, dL_dmean_normal[1] * alpha * T * dist_weight);
+			atomicAdd(&dL_dnormals[global_id].z, dL_dmean_normal[2] * alpha * T * dist_weight);
 
 			float dL_dalpha = 0.0f;
 			// Median depth-related gradients
@@ -549,11 +588,11 @@ renderCUDA(
 				dmedian_depth_dmedian_T_before = median_dist * ((log(0.5)-log(median_T_after))/(median_T_before*(log(median_T_after)-log(median_T_before))*(log(median_T_after)-log(median_T_before))));
 				float dmedian_depth_dmedian_T_after = median_dist * ((log(median_T_before)-log(0.5))/(median_T_after*(log(median_T_after)-log(median_T_before))*(log(median_T_after)-log(median_T_before))));
 				dmedian_depth_dmedian_T_before += dmedian_depth_dmedian_T_after * (1-alpha);
-				dL_dalpha += -(dL_ddensity * ddensity_dmedian_depth * dmedian_depth_dmedian_T_after * T);
+				dL_dalpha += -(dL_dmedian_depth * dmedian_depth_dmedian_T_after * T);
 			}
 			if(contributor < median_contributor_before -1)
 			{
-				dL_dalpha += -(dL_ddensity * ddensity_dmedian_depth * dmedian_depth_dmedian_T_before)/(1-alpha);
+				dL_dalpha += -(dL_dmedian_depth * dmedian_depth_dmedian_T_before)/(1-alpha);
 			}
 
 			// Propagate gradients to per-Gaussian colors and keep
@@ -625,6 +664,7 @@ void BACKWARD::preprocess(
 	const glm::vec3* campos,
 	const float3* dL_dmean2D,
 	const float* dL_dconic,
+	const float3* dL_dnormals,
 	glm::vec3* dL_dmean3D,
 	float* dL_dcolor,
 	float* dL_dcov3D,
@@ -666,6 +706,7 @@ void BACKWARD::preprocess(
 		scale_modifier,
 		projmatrix,
 		campos,
+		(float3*)dL_dnormals,
 		(float3*)dL_dmean2D,
 		(glm::vec3*)dL_dmean3D,
 		dL_dcolor,
@@ -692,7 +733,8 @@ void BACKWARD::render(
 	float4* dL_dconic2D,
 	float* dL_dopacity,
 	float* dL_dcolors,
-	float* dL_ddepth)
+	float* dL_ddepth,
+	float3* dL_dnormals)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
 		ranges,
@@ -710,5 +752,6 @@ void BACKWARD::render(
 		dL_dconic2D,
 		dL_dopacity,
 		dL_dcolors,
-		dL_ddepth);
+		dL_ddepth,
+		dL_dnormals);
 }

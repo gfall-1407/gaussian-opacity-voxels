@@ -428,9 +428,7 @@ renderCUDA(
 			mean_depth_weight += alpha * T * dist_weight;
 
 			for(int n=0; n<3; n++)
-			{
 				mean_normal[n] += normal[n] * alpha * T * dist_weight;
-			}
 
 			T = test_T;
 

@@ -22,6 +22,7 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from utils.point_utils import depth_to_normal
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -92,6 +93,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         depth_disortion = rendering[5, :, :]
         density_disortion = rendering[6, :, :]
         normal = rendering[7:10, :, :]
+        normal = (normal.permute(1,2,0) @ (viewpoint_cam.world_view_transform[:3,:3].T)).permute(2,0,1)
+
+        mean_depth = torch.nan_to_num(mean_depth, 0, 0)
+        median_depth = torch.nan_to_num(median_depth, 0, 0)
+
+        gaussian_depth = mean_depth * (1-pipe.depth_ratio) + (pipe.depth_ratio) * median_depth
+        gaussian_normal = depth_to_normal(viewpoint_cam, gaussian_depth)
 
         # RGB Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -100,7 +108,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
         lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
         lambda_density = opt.lambda_density if iteration > 3000 else 0.0
-        # lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
+        lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
         # lambda_thin = opt.lambda_thin if iteration > 10000 else 0.0
 
         #depth disortion LOSSES 
@@ -108,6 +116,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # density disortion LOSSES
         density_disortion_loss = lambda_density * density_disortion.mean() 
+
+        # normal LOSS
+        normal_error = (1 - (normal * gaussian_normal).sum(dim=0))[None]
+        normal_loss = lambda_normal * (normal_error).mean()
 
         loss = rbg_loss #+ depth_disortion_loss + density_disortion_loss
         loss.backward()
