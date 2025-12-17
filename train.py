@@ -91,6 +91,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         median_depth = rendering[4, :, :]
         depth_disortion = rendering[5, :, :]
         density_disortion = rendering[6, :, :]
+        normal = rendering[7:10, :, :]
 
         # RGB Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -114,6 +115,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         iter_end.record()
 
         with torch.no_grad():
+
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             if iteration % 10 == 0:
@@ -150,12 +152,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
             
-            if iteration % 2000 == 0:
+            if iteration % 200 == 0:
                 image_np = image.detach().cpu().numpy()
                 image_np = np.transpose(image_np, (1, 2, 0))
                 array = np.array(image_np*255.0, dtype=np.byte)  
                 image_save = Image.fromarray(array, "RGB")  
                 image_save.save("test/output_" + str(iteration) + ".png" )
+
+                normal_np = normal.detach().cpu().numpy()
+                normal_np = np.transpose(normal_np, (1, 2, 0))
+                normal_vis = (normal_np + 1.0) / 2.0
+                normal_vis = np.clip(normal_vis, 0.0, 1.0)
+                normal_array = np.array(normal_vis * 255.0, dtype=np.uint8)
+                normal_save = Image.fromarray(normal_array, "RGB")
+                normal_save.save("test/normal_" + str(iteration) + ".png")
 
         # if iteration == 1:
         #     with open('render_output/point_count.txt', 'w', encoding='utf-8') as count_f:

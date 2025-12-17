@@ -166,6 +166,8 @@ CudaRasterizer::GeometryState CudaRasterizer::GeometryState::fromChunk(char*& ch
 	cub::DeviceScan::InclusiveSum(nullptr, geom.scan_size, geom.tiles_touched, geom.tiles_touched, P);
 	obtain(chunk, geom.scanning_space, geom.scan_size, 128);
 	obtain(chunk, geom.point_offsets, P, 128);
+	obtain(chunk, geom.normals, P, 128);
+	obtain(chunk, geom.thinness, P, 128);
 	return geom;
 }
 
@@ -267,6 +269,8 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.cov3D,
 		geomState.rgb,
 		geomState.conic_opacity,
+		geomState.normals,
+		geomState.thinness,
 		tile_grid,
 		geomState.tiles_touched,
 		prefiltered
@@ -328,6 +332,8 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.means2D,
 		feature_ptr,
 		geomState.conic_opacity,
+		geomState.normals,
+		geomState.thinness,
 		imgState.accum_alpha,
 		imgState.n_contrib,
 		background,

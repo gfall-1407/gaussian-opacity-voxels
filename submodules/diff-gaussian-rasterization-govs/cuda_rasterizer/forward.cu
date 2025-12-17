@@ -115,7 +115,7 @@ __device__ float3 computeCov2D(const float3& mean, float focal_x, float focal_y,
 // Forward method for converting scale and rotation properties of each
 // Gaussian to a 3D covariance matrix in world space. Also takes care
 // of quaternion normalization.
-__device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 rot, float* cov3D)
+__device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 rot, float* cov3D, float3* normal, float* thinness)
 {
 	// Create scaling matrix
 	glm::mat3 S = glm::mat3(1.0f);
@@ -149,6 +149,31 @@ __device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 r
 	cov3D[3] = Sigma[1][1];
 	cov3D[4] = Sigma[1][2];
 	cov3D[5] = Sigma[2][2];
+
+	// normal and thinness computation
+    float sx = S[0][0];
+    float sy = S[1][1];
+    float sz = S[2][2];
+
+    int min_axis_idx = 0;
+    float min_scale = sx;
+
+    if (sy < min_scale) {
+        min_scale = sy;
+        min_axis_idx = 1;
+    }
+    if (sz < min_scale) {
+        min_scale = sz;
+        min_axis_idx = 2;
+    }
+
+    glm::vec3 n = R[min_axis_idx];
+    
+    normal->x = n.x;
+    normal->y = n.y;
+    normal->z = n.z;
+	
+    *thinness = min_scale;
 }
 
 // Perform initial steps for each Gaussian prior to rasterization.
@@ -175,6 +200,8 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float* cov3Ds,
 	float* rgb,
 	float4* conic_opacity,
+	float3* normals,
+	float* thinness,
 	const dim3 grid,
 	uint32_t* tiles_touched,
 	bool prefiltered)
@@ -208,7 +235,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	}
 	else
 	{
-		computeCov3D(scales[idx], scale_modifier, rotations[idx], cov3Ds + idx * 6);
+		computeCov3D(scales[idx], scale_modifier, rotations[idx], cov3Ds + idx * 6, normals + idx, thinness + idx);
 		cov3D = cov3Ds + idx * 6;
 	}
 
@@ -268,6 +295,8 @@ renderCUDA(
 	const float2* __restrict__ points_xy_image,
 	const float* __restrict__ features,
 	const float4* __restrict__ conic_opacity,
+	const float3* __restrict__ normals,
+	const float* __restrict__ thinness,
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
@@ -296,6 +325,8 @@ renderCUDA(
 	__shared__ int collected_id[BLOCK_SIZE];
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
+	__shared__ float3 collected_normals[BLOCK_SIZE];
+	__shared__ float collected_thinness[BLOCK_SIZE];
 
 	// Initialize helper variables
 	float T = 1.0f;
@@ -313,6 +344,10 @@ renderCUDA(
 	float median_T_after = 0;
 	float median_depth = 0;
 
+	float mean_normal[3] = {0};
+
+	float scale_distortion = 0;
+
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
 	{
@@ -329,6 +364,8 @@ renderCUDA(
 			collected_id[block.thread_rank()] = coll_id;
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
+			collected_normals[block.thread_rank()] = normals[coll_id];
+			collected_thinness[block.thread_rank()] = thinness[coll_id];
 		}
 		block.sync();
 
@@ -343,6 +380,8 @@ renderCUDA(
 			float2 xy = collected_xy[j];
 			float2 d = { xy.x - pixf.x, xy.y - pixf.y };
 			float4 con_o = collected_conic_opacity[j];
+			float normal[3] = {collected_normals[j].x, collected_normals[j].y, collected_normals[j].z};
+			float thinness = collected_thinness[j];
 			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
 			if (power > 0.0f)
 				continue;
@@ -388,6 +427,11 @@ renderCUDA(
 			mean_depth += local_depth * alpha * T * dist_weight;
 			mean_depth_weight += alpha * T * dist_weight;
 
+			for(int n=0; n<3; n++)
+			{
+				mean_normal[n] += normal[n] * alpha * T * dist_weight;
+			}
+
 			T = test_T;
 
 			// Keep track of last range entry to update this
@@ -414,6 +458,8 @@ renderCUDA(
 		out_color[MEDIAN_DEPTH_OFFSET * H * W + pix_id] = has_median ? median_depth : 0;
 		out_color[DEPTH_DISORTION_OFFSET * H * W + pix_id] = has_median ? (median_depth - mean_depth) * (median_depth - mean_depth) : 0;
 		out_color[DENSITY_DISORTION_OFFSET * H * W + pix_id] = has_median ? (median_depth - mean_depth) * (median_depth - mean_depth) : 0;
+		for(int n=0; n<3; n++)
+			out_color[(NORMAL_OFFSET + n) * H * W + pix_id] = mean_normal[n] / (mean_depth_weight + 1e-8f);
 	}
 }
 
@@ -426,6 +472,8 @@ void FORWARD::render(
 	const float2* means2D,
 	const float* colors,
 	const float4* conic_opacity,
+	const float3* normals,
+	const float* thinness,
 	float* final_T,
 	uint32_t* n_contrib,
 	const float* bg_color,
@@ -439,6 +487,8 @@ void FORWARD::render(
 		means2D,
 		colors,
 		conic_opacity,
+		normals,
+		thinness,
 		final_T,
 		n_contrib,
 		bg_color,
@@ -467,6 +517,8 @@ void FORWARD::preprocess(int P, int D, int M,
 	float* cov3Ds,
 	float* rgb,
 	float4* conic_opacity,
+	float3* normals,
+	float* thinness,
 	const dim3 grid,
 	uint32_t* tiles_touched,
 	bool prefiltered)
@@ -494,6 +546,8 @@ void FORWARD::preprocess(int P, int D, int M,
 		cov3Ds,
 		rgb,
 		conic_opacity,
+		normals,
+		thinness,
 		grid,
 		tiles_touched,
 		prefiltered
