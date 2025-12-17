@@ -327,7 +327,7 @@ __device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const gl
 	dL_dscale->y = glm::dot(Rt[1], dL_dMt[1]);
 	dL_dscale->z = glm::dot(Rt[2], dL_dMt[2]);
 
-	float3* dL_dnorm = dL_dnormals + idx;
+	const float3* dL_dnorm = dL_dnormals + idx;
 
 	dL_dMt[0] *= s.x;
 	dL_dMt[1] *= s.y;
@@ -350,9 +350,9 @@ __device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const gl
         if (sz < min_scale) {
             min_axis_idx = 2;
         }
-        dL_dMt[min_axis_idx][0] += dL_dN.x;
-        dL_dMt[min_axis_idx][1] += dL_dN.y;
-        dL_dMt[min_axis_idx][2] += dL_dN.z;
+        dL_dMt[min_axis_idx][0] += dL_dnorm->x;
+        dL_dMt[min_axis_idx][1] += dL_dnorm->y;
+        dL_dMt[min_axis_idx][2] += dL_dnorm->z;
     }
 
 	// Gradients of loss w.r.t. normalized quaternion
@@ -443,7 +443,7 @@ renderCUDA(
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
 	float* __restrict__ dL_ddepths,
-	float3* __restrict__ dL_dnormals,)
+	float3* __restrict__ dL_dnormals)
 {
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -492,7 +492,7 @@ renderCUDA(
 	float dL_dmean_normal[3] = {0}; 
 	if (inside)
 		for(int i =0; i<3; i++)
-			dL_dmean_normal[i] = dL_dpixels[pix_id + (MEAN_NORMAL_OFFSET + i) * H * W];
+			dL_dmean_normal[i] = dL_dpixels[pix_id + (NORMAL_OFFSET + i) * H * W];
  
 	// We start from the back. The ID of the last contributing
 	// Gaussian is known from each pixel from the forward.
@@ -569,7 +569,7 @@ renderCUDA(
 			dL_ddepths[global_id] += dL_dmean_depth * dmean_depth_ddepth;
 
 			//normal-related gradients
-			atocmicAdd(&dL_dnormals[global_id].x, dL_dmean_normal[0] * alpha * T * dist_weight);
+			atomicAdd(&dL_dnormals[global_id].x, dL_dmean_normal[0] * alpha * T * dist_weight);
 			atomicAdd(&dL_dnormals[global_id].y, dL_dmean_normal[1] * alpha * T * dist_weight);
 			atomicAdd(&dL_dnormals[global_id].z, dL_dmean_normal[2] * alpha * T * dist_weight);
 
