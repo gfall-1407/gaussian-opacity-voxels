@@ -88,18 +88,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         rendering, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         image = rendering[0:3, :, :]
-        mean_depth = rendering[3, :, :]
-        median_depth = rendering[4, :, :]
-        depth_disortion = rendering[5, :, :]
-        density_disortion = rendering[6, :, :]
-        normal = rendering[7:10, :, :]
+        mean_depth = rendering[3:4]
+        median_depth = rendering[4:5]
+        depth_disortion = rendering[5:6, :, :]
+        density_disortion = rendering[6:7, :, :]
+        normal = rendering[7:10]
         normal = (normal.permute(1,2,0) @ (viewpoint_cam.world_view_transform[:3,:3].T)).permute(2,0,1)
+        thinness = render[10:11, :, :]
 
         mean_depth = torch.nan_to_num(mean_depth, 0, 0)
         median_depth = torch.nan_to_num(median_depth, 0, 0)
 
         gaussian_depth = mean_depth * (1-pipe.depth_ratio) + (pipe.depth_ratio) * median_depth
         gaussian_normal = depth_to_normal(viewpoint_cam, gaussian_depth)
+        gaussian_normal = gaussian_normal.permute(2, 0, 1)
 
         # RGB Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -109,7 +111,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
         lambda_density = opt.lambda_density if iteration > 3000 else 0.0
         lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
-        # lambda_thin = opt.lambda_thin if iteration > 10000 else 0.0
+        lambda_thin = opt.lambda_thin if iteration > 3000 else 0.0
 
         #depth disortion LOSSES 
         depth_disortion_loss = lambda_dist * depth_disortion.mean()  
@@ -121,7 +123,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         normal_error = (1 - (normal * gaussian_normal).sum(dim=0))[None]
         normal_loss = lambda_normal * (normal_error).mean()
 
-        loss = rbg_loss + depth_disortion_loss + density_disortion_loss
+        # thins LOSS
+        thin_loss = lambda_thin * thinness.mean()
+
+        loss = rbg_loss + depth_disortion_loss + density_disortion_loss + normal_loss + thin_loss
         loss.backward()
 
         iter_end.record()
@@ -164,7 +169,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
             
-            if iteration % 200 == 0:
+            if iteration % 2000 == 0:
                 image_np = image.detach().cpu().numpy()
                 image_np = np.transpose(image_np, (1, 2, 0))
                 array = np.array(image_np*255.0, dtype=np.byte)  

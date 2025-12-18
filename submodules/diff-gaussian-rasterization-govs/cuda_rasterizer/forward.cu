@@ -381,7 +381,7 @@ renderCUDA(
 			float2 d = { xy.x - pixf.x, xy.y - pixf.y };
 			float4 con_o = collected_conic_opacity[j];
 			float normal[3] = {collected_normals[j].x, collected_normals[j].y, collected_normals[j].z};
-			float thinness = collected_thinness[j];
+			float local_thinness = collected_thinness[j];
 			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
 			if (power > 0.0f)
 				continue;
@@ -426,6 +426,7 @@ renderCUDA(
 			}
 			mean_depth += local_depth * alpha * T * dist_weight;
 			mean_depth_weight += alpha * T * dist_weight;
+			scale_distortion += local_thinness * local_thinness * alpha * T * dist_weight;
 
 			for(int n=0; n<3; n++)
 				mean_normal[n] += normal[n] * alpha * T * dist_weight;
@@ -458,6 +459,7 @@ renderCUDA(
 		out_color[DENSITY_DISORTION_OFFSET * H * W + pix_id] = has_median ? (median_depth - mean_depth) * (median_depth - mean_depth) : 0;
 		for(int n=0; n<3; n++)
 			out_color[(NORMAL_OFFSET + n) * H * W + pix_id] = mean_normal[n] / (mean_depth_weight + 1e-8f);
+		out_color[SCALE_DISTORTION_OFFSET * H * W + pix_id] = has_median ? scale_distortion / (mean_depth_weight + 1e-8f) : 0;
 	}
 }
 
