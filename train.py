@@ -94,7 +94,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         density_disortion = rendering[6:7, :, :]
         normal = rendering[7:10]
         normal = (normal.permute(1,2,0) @ (viewpoint_cam.world_view_transform[:3,:3].T)).permute(2,0,1)
-        thinness = render[10:11, :, :]
+        thinness = rendering[10:11, :, :]
 
         mean_depth = torch.nan_to_num(mean_depth, 0, 0)
         median_depth = torch.nan_to_num(median_depth, 0, 0)
@@ -126,8 +126,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # thins LOSS
         thin_loss = lambda_thin * thinness.mean()
 
-        # loss = rbg_loss + depth_disortion_loss + density_disortion_loss + normal_loss + thin_loss
-        loss = rbg_loss + depth_disortion_loss + thin_loss
+        loss = rbg_loss + depth_disortion_loss + density_disortion_loss + normal_loss + thin_loss
+        # loss = rbg_loss + depth_disortion_loss + thin_loss
         loss.backward()
 
         iter_end.record()
@@ -184,6 +184,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 normal_array = np.array(normal_vis * 255.0, dtype=np.uint8)
                 normal_save = Image.fromarray(normal_array, "RGB")
                 normal_save.save("test/normal_" + str(iteration) + ".png")
+
+                gaussian_normal_np = gaussian_normal.detach().cpu().numpy()
+                gaussian_normal_np = np.transpose(gaussian_normal_np, (1, 2, 0))
+                gaussian_normal_vis = (gaussian_normal_np + 1.0) / 2.0
+                gaussian_normal_vis = np.clip(gaussian_normal_vis, 0.0, 1.0)
+                gaussian_normal_array = np.array(gaussian_normal_vis * 255.0, dtype=np.uint8)
+                gaussian_normal_save = Image.fromarray(gaussian_normal_array, "RGB")
+                gaussian_normal_save.save("test/gaussian_normal_" + str(iteration) + ".png")
 
         # if iteration == 1:
         #     with open('render_output/point_count.txt', 'w', encoding='utf-8') as count_f:
