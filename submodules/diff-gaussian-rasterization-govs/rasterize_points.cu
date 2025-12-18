@@ -160,6 +160,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
   torch::Tensor dL_drotations = torch::zeros({P, 4}, means3D.options());
   torch::Tensor dL_ddepth = torch::zeros({P, 1}, means3D.options());
   torch::Tensor dL_dnormal = torch::zeros({P, 3}, means3D.options());
+  torch::Tensor dL_dthinness = torch::zeros({P, 1}, means3D.options());
   
   if(P != 0)
   {  
@@ -194,6 +195,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	  dL_drotations.contiguous().data<float>(),
 	  dL_ddepth.contiguous().data<float>(),
 	  dL_dnormal.contiguous().data<float>(),
+	  dL_dthinness.contiguous().data<float>(),
 	  debug);
   }
 

@@ -126,7 +126,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # thins LOSS
         thin_loss = lambda_thin * thinness.mean()
 
-        loss = rbg_loss + depth_disortion_loss + density_disortion_loss + normal_loss + thin_loss
+        # loss = rbg_loss + depth_disortion_loss + density_disortion_loss + normal_loss + thin_loss
+        loss = rbg_loss + depth_disortion_loss + thin_loss
         loss.backward()
 
         iter_end.record()

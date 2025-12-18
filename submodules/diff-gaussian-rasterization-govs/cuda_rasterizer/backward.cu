@@ -278,7 +278,7 @@ __global__ void computeCov2DCUDA(int P,
 
 // Backward pass for the conversion of scale and rotation to a 
 // 3D covariance matrix for each Gaussian. 
-__device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const glm::vec4 rot, const float* dL_dcov3Ds, const float3* dL_dnormals, glm::vec3* dL_dscales, glm::vec4* dL_drots)
+__device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const glm::vec4 rot, const float* dL_dcov3Ds, const float3* dL_dnormals, const float* dL_dthinness, glm::vec3* dL_dscales, glm::vec4* dL_drots)
 {
 	// Recompute (intermediate) results for the 3D covariance computation.
 	glm::vec4 q = rot;// / glm::length(rot);
@@ -328,32 +328,36 @@ __device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const gl
 	dL_dscale->z = glm::dot(Rt[2], dL_dMt[2]);
 
 	const float3* dL_dnorm = dL_dnormals + idx;
+	const float dL_dthin = dL_dthinness[idx];
 
 	dL_dMt[0] *= s.x;
 	dL_dMt[1] *= s.y;
 	dL_dMt[2] *= s.z;
 
+    float sx = s.x;
+    float sy = s.y;
+    float sz = s.z;
 
-	if (dL_dnorm != nullptr)
-    {
-        float sx = s.x;
-        float sy = s.y;
-        float sz = s.z;
+    int min_axis_idx = 0;
+    float min_scale = sx;
 
-        int min_axis_idx = 0;
-        float min_scale = sx;
-
-        if (sy < min_scale) {
-            min_scale = sy;
-            min_axis_idx = 1;
-        }
-        if (sz < min_scale) {
-            min_axis_idx = 2;
-        }
-        dL_dMt[min_axis_idx][0] += dL_dnorm->x;
-        dL_dMt[min_axis_idx][1] += dL_dnorm->y;
-        dL_dMt[min_axis_idx][2] += dL_dnorm->z;
+    if (sy < min_scale) {
+        min_scale = sy;
+        min_axis_idx = 1;
     }
+    if (sz < min_scale) {
+        min_axis_idx = 2;
+    }
+    dL_dMt[min_axis_idx][0] += dL_dnorm->x;
+    dL_dMt[min_axis_idx][1] += dL_dnorm->y;
+    dL_dMt[min_axis_idx][2] += dL_dnorm->z;
+
+	if (min_axis_idx == 0)
+		dL_dscale->x += dL_dthin;
+	else if (min_axis_idx == 1)
+		dL_dscale->y += dL_dthin;
+	else if (min_axis_idx == 2)
+		dL_dscale->z += dL_dthin;
 
 	// Gradients of loss w.r.t. normalized quaternion
 	glm::vec4 dL_dq;
@@ -383,6 +387,7 @@ __global__ void preprocessCUDA(
 	const float* proj,
 	const glm::vec3* campos,
 	const float3* dL_dnormals,
+	const float* dL_dthinness,
 	const float3* dL_dmean2D,
 	glm::vec3* dL_dmeans,
 	float* dL_dcolor,
@@ -420,7 +425,7 @@ __global__ void preprocessCUDA(
 
 	// Compute gradient updates due to computing covariance from scale/rotation
 	if (scales)
-		computeCov3D(idx, scales[idx], scale_modifier, rotations[idx], dL_dcov3D, dL_dnormals, dL_dscale, dL_drot);
+		computeCov3D(idx, scales[idx], scale_modifier, rotations[idx], dL_dcov3D, dL_dnormals, dL_dthinness, dL_dscale, dL_drot);
 }
 
 // Backward version of the rendering procedure.
@@ -443,7 +448,8 @@ renderCUDA(
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
 	float* __restrict__ dL_ddepths,
-	float3* __restrict__ dL_dnormals)
+	float3* __restrict__ dL_dnormals,
+	float* __restrict__ dL_dthinness)
 {
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -493,6 +499,8 @@ renderCUDA(
 	if (inside)
 		for(int i =0; i<3; i++)
 			dL_dmean_normal[i] = dL_dpixels[pix_id + (NORMAL_OFFSET + i) * H * W];
+	
+	float dL_dmean_thinness = inside ? dL_dpixels[pix_id + SCALE_DISTORTION_OFFSET * H * W] : 0;
  
 	// We start from the back. The ID of the last contributing
 	// Gaussian is known from each pixel from the forward.
@@ -572,6 +580,8 @@ renderCUDA(
 			atomicAdd(&dL_dnormals[global_id].x, dL_dmean_normal[0] * alpha * T * dist_weight);
 			atomicAdd(&dL_dnormals[global_id].y, dL_dmean_normal[1] * alpha * T * dist_weight);
 			atomicAdd(&dL_dnormals[global_id].z, dL_dmean_normal[2] * alpha * T * dist_weight);
+
+			atomicAdd(&dL_dthinness[global_id], dL_dmean_thinness * alpha * T * dist_weight);
 
 			float dL_dalpha = 0.0f;
 			// Median depth-related gradients
@@ -665,6 +675,7 @@ void BACKWARD::preprocess(
 	const float3* dL_dmean2D,
 	const float* dL_dconic,
 	const float3* dL_dnormals,
+	const float* dL_dthinness,
 	glm::vec3* dL_dmean3D,
 	float* dL_dcolor,
 	float* dL_dcov3D,
@@ -707,6 +718,7 @@ void BACKWARD::preprocess(
 		projmatrix,
 		campos,
 		(float3*)dL_dnormals,
+		dL_dthinness,
 		(float3*)dL_dmean2D,
 		(glm::vec3*)dL_dmean3D,
 		dL_dcolor,
@@ -734,7 +746,8 @@ void BACKWARD::render(
 	float* dL_dopacity,
 	float* dL_dcolors,
 	float* dL_ddepth,
-	float3* dL_dnormals)
+	float3* dL_dnormals,
+	float* dL_dthinness)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
 		ranges,
@@ -753,5 +766,6 @@ void BACKWARD::render(
 		dL_dopacity,
 		dL_dcolors,
 		dL_ddepth,
-		dL_dnormals);
+		dL_dnormals,
+		dL_dthinness);
 }

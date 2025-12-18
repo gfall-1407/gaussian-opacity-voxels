@@ -83,6 +83,7 @@ namespace CudaRasterizer
 			float* dL_drot,
 			float* dL_ddepth,
 			float* dL_dnormal,
+			float* dL_dthinness,
 			bool debug);
 	};
 };
