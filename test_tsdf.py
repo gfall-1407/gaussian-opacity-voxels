@@ -171,3 +171,9 @@ if __name__ == "__main__":
     device = o3c.Device("CUDA:0" if o3c.cuda.is_available() else "CPU:0")
     print(f"Current Device: {device}") 
     # 如果这里打印的是 CPU:0，说明你的 Open3D 没认出显卡，或者驱动有问题。
+
+    print(f"PyTorch CUDA: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"PyTorch Device: {torch.cuda.get_device_name(0)}")
+    
+    print(f"Open3D CUDA: {o3c.cuda.is_available()}")
